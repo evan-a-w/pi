@@ -31,6 +31,7 @@ export async function serve(options: ServeOptions = {}): Promise<void> {
 
 	try {
 		await supervisor.recoverAfterRestart();
+		await supervisor.spawnPinnedInstances();
 		if (isRadiusEnabled()) {
 			const machine = await radiusPresence.start();
 			console.log(`radius integration enabled: ${socketPath} -> ${getRadiusServerBaseUrl()}`);

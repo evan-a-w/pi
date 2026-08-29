@@ -14,7 +14,7 @@ Two processes are needed:
 # 1. Bridge: spawns `pi --mode rpc` and exposes it over WebSocket + serves theme files
 PI_WEB_CWD=/path/to/project npm run dev:bridge --workspace=@earendil-works/pi-web
 
-# 2. Vite dev server (proxies /ws and /theme to the bridge on port 4464)
+# 2. Vite dev server (proxies /ws, /theme, and /themes to the bridge on port 4464)
 npm run dev --workspace=@earendil-works/pi-web
 ```
 

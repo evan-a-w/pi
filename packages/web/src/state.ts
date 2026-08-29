@@ -1,5 +1,5 @@
-import { signal } from "@preact/signals";
-import { RpcClient } from "./client.ts";
+import { effect, signal } from "@preact/signals";
+import { INSTANCE_UNREACHABLE_CLOSE_CODE, RpcClient } from "./client.ts";
 import type {
 	AgentMessage,
 	AgentSessionEvent,
@@ -38,6 +38,12 @@ export interface Widget {
 }
 
 export const connected = signal(false);
+/**
+ * Set once the WS closes with the "unknown instance" code (4404): the instance is
+ * definitively gone (never existed, or was stopped), not a transient drop, so the
+ * app renders a full-page "session not found" state instead of retrying forever.
+ */
+export const sessionUnreachable = signal(false);
 export const sessionState = signal<RpcSessionState | undefined>(undefined);
 export const messages = signal<AgentMessage[]>([]);
 export const toolStates = signal<Record<string, ToolDisplayState>>({});
@@ -86,11 +92,57 @@ export const client = new RpcClient(`${wsProtocol}://${location.host}${basePath}
 let syncing = false;
 const eventBuffer: AgentSessionEvent[] = [];
 
-function handleConnectionChange(isConnected: boolean): void {
+function handleConnectionChange(isConnected: boolean, closeCode?: number): void {
 	connected.value = isConnected;
 	if (isConnected) {
+		sessionUnreachable.value = false;
 		void sync();
+		// A reconnect is a reasonable moment to also refresh the pinned sessions
+		// sidebar (e.g. another session was pinned/unpinned while this one dropped).
+		void refreshPinnedSessions();
+	} else if (closeCode === INSTANCE_UNREACHABLE_CLOSE_CODE) {
+		// The instance id is gone, but the session itself may have come back under
+		// a NEW instance id (server restart respawns pinned sessions). Follow it
+		// before falling back to the full-page "Session not found" state.
+		void followRespawnedSession();
 	}
+}
+
+/**
+ * After a 4404, poll the dashboard API for a live instance backing the same
+ * session file and redirect to it. Pinned sessions auto-respawn on server
+ * restart with a fresh id, so an open tab should follow rather than dead-end.
+ */
+async function followRespawnedSession(): Promise<void> {
+	const sessionFile = sessionState.value?.sessionFile;
+	if (sessionFile) {
+		for (let attempt = 0; attempt < 5; attempt++) {
+			try {
+				const response = await fetch("/api/dashboard-sessions", { cache: "no-store" });
+				if (response.ok) {
+					const data = (await response.json()) as {
+						ok?: boolean;
+						sessions?: Array<{ id?: string; sessionFile?: string; status?: string }>;
+					};
+					const revived = data.sessions?.find(
+						(session) =>
+							session.sessionFile === sessionFile &&
+							session.id &&
+							session.id !== instanceId &&
+							(session.status === "online" || session.status === "starting"),
+					);
+					if (revived) {
+						location.href = `/i/${revived.id}/`;
+						return;
+					}
+				}
+			} catch {
+				// Dashboard unreachable (server still restarting); keep polling.
+			}
+			await new Promise((resolve) => setTimeout(resolve, 2000));
+		}
+	}
+	sessionUnreachable.value = true;
 }
 
 export function dataAs<T>(response: RpcResponse, command: string): T | undefined {
@@ -382,7 +434,30 @@ function applyEvent(event: AgentSessionEvent): void {
 			break;
 
 		case "terminal_exit":
+			// Reset so a later reopen's fresh XTerm doesn't get this session's last
+			// chunk replayed into it the instant it subscribes (signals fire their
+			// current value synchronously on subscribe).
+			terminalOutput.value = undefined;
 			pushToast(event.reason ? `Terminal exited (${event.reason})` : "Terminal exited", "info");
+			break;
+
+		case "tui_output":
+			tuiOutput.value = { data: event.data, seq: tuiOutputSeq++ };
+			break;
+
+		case "tui_exit":
+			tuiActive.value = false;
+			// Same reasoning as terminal_exit above.
+			tuiOutput.value = undefined;
+			pushToast(event.reason ? `TUI exited (${event.reason})` : "TUI exited", "info");
+			void sync();
+			break;
+
+		case "session_reloaded":
+			// The TUI wrote to the session file while still attached (e.g. it
+			// switched models from its own selector); re-sync so the footer and
+			// session state stay live instead of only refreshing on tui_close.
+			void sync();
 			break;
 
 		default:
@@ -495,6 +570,46 @@ export const terminalOpen = signal(false);
 export const terminalOutput = signal<{ data: string; seq: number } | undefined>(undefined);
 let terminalOutputSeq = 0;
 
+/**
+ * Whether the TUI view is showing in place of the chat area. Unlike the
+ * terminal panel, this replaces ChatList/CommandResultCard/WidgetAreas/Editor
+ * rather than docking alongside them: the TUI and the chat view render the
+ * same session and should not both be visible at once.
+ */
+export const tuiActive = signal(false);
+/**
+ * The user asked for the TUI while the session was still streaming/compacting.
+ * Opening a second pi process mid-response would fork the session file, so the
+ * backend refuses; instead of surfacing that as an error we hold the TUI view
+ * in a waiting state and attach automatically the moment the run settles.
+ */
+export const tuiWaiting = signal(false);
+/** Latest TUI output chunk, same shape and purpose as terminalOutput. */
+export const tuiOutput = signal<{ data: string; seq: number } | undefined>(undefined);
+let tuiOutputSeq = 0;
+
+effect(() => {
+	if (tuiWaiting.value && workingMessage.value === undefined) {
+		tuiWaiting.value = false;
+	}
+});
+
+/** Toggle the TUI view. Closing sends tui_close and resyncs the chat view. */
+export async function toggleTui(): Promise<void> {
+	if (tuiActive.value) {
+		tuiActive.value = false;
+		tuiWaiting.value = false;
+		const response = await client.command({ type: "tui_close" });
+		reportFailure(response, "Failed to close TUI");
+		await sync();
+		return;
+	}
+	// Busy: show the TUI view in a waiting state; the effect above attaches it
+	// once the current run settles.
+	tuiWaiting.value = workingMessage.value !== undefined || Boolean(sessionState.value?.isStreaming);
+	tuiActive.value = true;
+}
+
 /** Transient card shown at the bottom of the chat (e.g. /session output). */
 export const commandResult = signal<{ title: string; markdown: string } | undefined>(undefined);
 export const modelPickerOpen = signal(false);
@@ -518,15 +633,29 @@ export function toggleSubagentsPanel(): void {
 	activePanel.value = activePanel.value === "subagents" ? "chat" : "subagents";
 }
 
-/** REST endpoints live under the same base path as the app (e.g. /i/<id>/subagents). */
+/**
+ * REST endpoints live under the same base path as the app (e.g. /i/<id>/subagents).
+ * Failures are reported via toast instead of swallowed: a silent failure here reads
+ * to the user as "clicking did nothing" (e.g. a transcript/output tab stays empty).
+ */
 async function fetchSubagentJson<T>(path: string): Promise<T | undefined> {
 	try {
 		const response = await fetch(`${basePath}${path}`, { cache: "no-store" });
-		if (!response.ok) return undefined;
-		const data = (await response.json()) as { ok?: boolean } & Record<string, unknown>;
-		if (data.ok === false) return undefined;
+		if (!response.ok) {
+			pushToast(`Failed to load subagent data: HTTP ${response.status}`, "error");
+			return undefined;
+		}
+		const data = (await response.json()) as { ok?: boolean; error?: string } & Record<string, unknown>;
+		if (data.ok === false) {
+			pushToast(
+				data.error ? `Failed to load subagent data: ${data.error}` : "Failed to load subagent data",
+				"error",
+			);
+			return undefined;
+		}
 		return data as unknown as T;
-	} catch {
+	} catch (error) {
+		pushToast(`Failed to load subagent data: ${error instanceof Error ? error.message : String(error)}`, "error");
 		return undefined;
 	}
 }
@@ -583,10 +712,14 @@ export async function selectSubagentRun(key: string): Promise<void> {
 export async function setSubagentView(view: SubagentView): Promise<void> {
 	if (subagentView.value === view) return;
 	subagentView.value = view;
+	// Clear the previous view's content so a slow fetch doesn't briefly show stale
+	// (wrong-view) content, matching selectSubagentRun's behavior.
+	subagentFile.value = undefined;
 	await loadSelectedSubagentFile();
 }
 
 export async function selectSubagentOutput(path: string): Promise<void> {
+	subagentFile.value = undefined;
 	subagentLoading.value = true;
 	const data = await fetchSubagentJson<SubagentFileData>(`subagents/file?path=${encodeURIComponent(path)}`);
 	subagentFile.value = data;
@@ -614,6 +747,81 @@ export function stopSubagentPolling(): void {
 		subagentPollTimer = undefined;
 	}
 	subagentPolling.value = false;
+}
+
+// ============================================================================
+// Pinned sessions sidebar
+// ============================================================================
+
+export interface PinnedSessionSummary {
+	id: string;
+	name: string;
+	status: string;
+	// Account namespace (pi-server concept, see packages/server/src/namespaces.ts);
+	// undefined means the implicit default namespace.
+	namespace?: string;
+}
+
+export const pinnedSessions = signal<PinnedSessionSummary[]>([]);
+
+/**
+ * This session's own account namespace (pi-server concept), found by matching
+ * instanceId in the same /api/dashboard-sessions response used for the pinned
+ * sidebar below. undefined under bare `pi --web` (no dashboard-sessions API)
+ * or the implicit default namespace.
+ */
+export const currentNamespace = signal<string | undefined>(undefined);
+
+/**
+ * Pinned + live sessions for the in-session sidebar quick-switcher. Pinning is a
+ * pi-server/dashboard concept (InstanceRecord.pinned) with no equivalent under
+ * bare `pi --web`, where /api/dashboard-sessions does not exist, so this is a
+ * no-op there (instanceId is undefined). Stopped pinned sessions are omitted
+ * rather than linked: a pinned session auto-respawns while the server is up, so
+ * "stopped" here means genuinely unavailable right now.
+ */
+export async function refreshPinnedSessions(): Promise<void> {
+	if (!instanceId) return;
+	try {
+		const res = await fetch("/api/dashboard-sessions");
+		if (!res.ok) return;
+		const data = (await res.json()) as {
+			ok: boolean;
+			sessions?: Array<{ id?: string; name: string; status: string; pinned: boolean; namespace?: string }>;
+		};
+		if (!data.ok || !data.sessions) return;
+		pinnedSessions.value = data.sessions
+			.filter(
+				(session): session is { id: string; name: string; status: string; pinned: boolean; namespace?: string } =>
+					Boolean(session.id) && session.pinned && (session.status === "online" || session.status === "starting"),
+			)
+			.map((session) => ({
+				id: session.id,
+				name: session.name,
+				status: session.status,
+				namespace: session.namespace,
+			}));
+		currentNamespace.value = data.sessions.find((session) => session.id === instanceId)?.namespace;
+	} catch {
+		// Best-effort: the sidebar keeps its last-known list (or stays empty) on failure.
+	}
+}
+
+let pinnedSessionsPollTimer: ReturnType<typeof setInterval> | undefined;
+
+/** Slow poll (not aggressive) since pin/unpin and spawn/stop are infrequent, manual actions. */
+export function startPinnedSessionsPolling(): void {
+	if (pinnedSessionsPollTimer) return;
+	pinnedSessionsPollTimer = setInterval(() => {
+		void refreshPinnedSessions();
+	}, 30_000);
+}
+
+export function stopPinnedSessionsPolling(): void {
+	if (pinnedSessionsPollTimer) {
+		clearInterval(pinnedSessionsPollTimer);
+		pinnedSessionsPollTimer = undefined;
+	}
 }
 
 function formatTokenCount(count: number): string {

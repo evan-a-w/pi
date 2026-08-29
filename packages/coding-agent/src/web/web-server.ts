@@ -110,7 +110,11 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
 		}
 
 		if (url.pathname.startsWith("/theme/")) {
-			const themeFile = resolveThemeFile(decodeURIComponent(url.pathname.slice("/theme/".length)));
+			const requestedName = decodeURIComponent(url.pathname.slice("/theme/".length));
+			// The client requests "<name>.json"; theme names themselves have no extension.
+			const themeFile = resolveThemeFile(
+				requestedName.endsWith(".json") ? requestedName.slice(0, -".json".length) : requestedName,
+			);
 			if (!themeFile) {
 				sendText(response, 404, "Theme not found\n");
 				return;

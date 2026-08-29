@@ -1,6 +1,42 @@
+import { useState } from "preact/hooks";
+import { copyText } from "../copy.ts";
 import type { AgentMessage, AssistantMessage, ImageContent, ThinkingContent, UserMessage } from "../protocol.ts";
 import { MarkdownView } from "./markdown-view.tsx";
 import { ToolExecution } from "./tool-execution.tsx";
+
+/** Hover copy button for a chunk of message text. */
+function CopyButton({ text }: { text: string }) {
+	const [copied, setCopied] = useState(false);
+	return (
+		<button
+			type="button"
+			class="copy-btn"
+			title="Copy text"
+			onClick={() => {
+				void copyText(text).then((ok) => {
+					if (!ok) return;
+					setCopied(true);
+					window.setTimeout(() => setCopied(false), 1200);
+				});
+			}}
+		>
+			{copied ? (
+				<svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+					<path d="M3 8.5L6.5 12L13 4.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+				</svg>
+			) : (
+				<svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+					<rect x="5.5" y="5.5" width="8" height="8" rx="1" stroke="currentColor" stroke-width="1.2" />
+					<path
+						d="M10.5 5.5V3.5a1 1 0 00-1-1h-6a1 1 0 00-1 1v6a1 1 0 001 1h2"
+						stroke="currentColor"
+						stroke-width="1.2"
+					/>
+				</svg>
+			)}
+		</button>
+	);
+}
 
 function userContentParts(message: UserMessage): { text: string; images: ImageContent[] } {
 	if (typeof message.content === "string") {
@@ -21,7 +57,8 @@ function userContentParts(message: UserMessage): { text: string; images: ImageCo
 export function UserMessageView({ message }: { message: UserMessage }) {
 	const { text, images } = userContentParts(message);
 	return (
-		<div class="msg msg-user">
+		<div class="msg msg-user copy-wrap">
+			{text && <CopyButton text={text} />}
 			{text && <div class="msg-user-text">{text}</div>}
 			{images.map((image, index) => (
 				<img
@@ -59,7 +96,13 @@ export function AssistantMessageView({ message }: { message: AssistantMessage })
 					return <ThinkingBlock key={`thinking-${index}`} block={block} />;
 				}
 				if (block.type === "text") {
-					return block.text.trim() === "" ? null : <MarkdownView key={`text-${index}`} text={block.text} />;
+					if (block.text.trim() === "") return null;
+					return (
+						<div key={`text-${index}`} class="copy-wrap">
+							<CopyButton text={block.text} />
+							<MarkdownView text={block.text} />
+						</div>
+					);
 				}
 				if (block.type === "toolCall") {
 					return <ToolExecution key={block.id} toolCallId={block.id} name={block.name} args={block.arguments} />;

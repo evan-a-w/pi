@@ -39,6 +39,7 @@ import {
 } from "./core/session-cwd.ts";
 import { assertValidSessionId, SessionManager } from "./core/session-manager.ts";
 import { SettingsManager } from "./core/settings-manager.ts";
+import { reapStaleTerminals } from "./core/terminal/index.ts";
 import { printTimings, resetTimings, time } from "./core/timings.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/trust-manager.ts";
 import { builtInExtensions } from "./extensions/index.ts";
@@ -837,6 +838,13 @@ export async function main(args: string[], options?: MainOptions) {
 	// RPC and web modes refresh catalogs here in the background; interactive mode starts its refresh after TUI initialization.
 	if (!offlineMode && (appMode === "rpc" || appMode === "web")) {
 		void modelRuntime.refresh().catch(() => {});
+	}
+
+	// Backstop for a SIGKILLed prior pi process (interactive/web/rpc, including a
+	// packages/server-spawned RPC child): reap any leaked `pi-<pid>-*` tmux sessions
+	// from processes that are no longer alive before this run might create its own.
+	if (appMode === "rpc" || appMode === "web" || appMode === "interactive") {
+		void reapStaleTerminals().catch(() => {});
 	}
 
 	if (appMode === "rpc") {

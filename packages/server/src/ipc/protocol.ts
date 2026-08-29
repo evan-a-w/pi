@@ -68,8 +68,11 @@ export interface InstanceSummary {
 	label?: string;
 	sessionId?: string;
 	sessionFile?: string;
+	sessionName?: string;
 	radiusPiId?: string;
 	webPort?: number;
+	pinned?: boolean;
+	archived?: boolean;
 }
 
 export interface ResponseBase {

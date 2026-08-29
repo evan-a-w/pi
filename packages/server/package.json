@@ -23,7 +23,8 @@
 		"clean": "shx rm -rf dist",
 		"dev": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
 		"build": "tsgo -p tsconfig.build.json && shx chmod +x dist/cli.js",
-		"prepublishOnly": "npm run clean && npm run build"
+		"prepublishOnly": "npm run clean && npm run build",
+		"test": "vitest --run"
 	},
 	"keywords": [
 		"pi",
@@ -46,6 +47,7 @@
 	},
 	"devDependencies": {
 		"@types/ws": "8.18.1",
-		"shx": "0.4.0"
+		"shx": "0.4.0",
+		"vitest": "4.1.9"
 	}
 }

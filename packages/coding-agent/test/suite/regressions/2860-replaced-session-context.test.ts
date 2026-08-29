@@ -13,6 +13,7 @@ import {
 import { AuthStorage } from "../../../src/core/auth-storage.ts";
 import { ModelRuntime } from "../../../src/core/model-runtime.ts";
 import { SessionManager } from "../../../src/core/session-manager.ts";
+import { SettingsManager } from "../../../src/core/settings-manager.ts";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionFactory } from "../../../src/index.ts";
 
 function getText(message: AgentSession["messages"][number]): string {
@@ -57,6 +58,9 @@ describe("regression #2860: replaced session callbacks", () => {
 				cwd,
 				agentDir: tempDir,
 				modelRuntime,
+				// This test asserts exact response sequencing against a small fixed queue of
+				// faux responses; auto session naming would consume one in the background.
+				settingsManager: SettingsManager.inMemory({ autoNameSession: false }),
 				resourceLoaderOptions: {
 					extensionFactories: [
 						(pi: ExtensionAPI) => {

@@ -42,14 +42,18 @@ try {
 
 export const VERSION: string = pkg.version || "0.0.0";
 
+/** Base `~/.pi` (or `$PI_CONFIG_DIR`) directory shared by the server dir and namespace agent dirs. */
+export function getPiBaseDir(): string {
+	return process.env.PI_CONFIG_DIR || join(homedir(), CONFIG_DIR_NAME);
+}
+
 export function getServerDir(): string {
 	const envDir = process.env[ENV_SERVER_DIR];
 	if (envDir) {
 		return envDir;
 	}
 
-	const piDir = process.env.PI_CONFIG_DIR || join(homedir(), CONFIG_DIR_NAME);
-	return join(piDir, "server");
+	return join(getPiBaseDir(), "server");
 }
 
 export function getAuthPath(): string {
@@ -62,6 +66,36 @@ export function getMachinePath(): string {
 
 export function getInstancesPath(): string {
 	return join(getServerDir(), "instances.json");
+}
+
+export function getNamespacesRegistryPath(): string {
+	return join(getServerDir(), "namespaces.json");
+}
+
+/**
+ * Account namespaces: separate PI_CODING_AGENT_DIR trees so each namespace has
+ * its own provider credentials (auth.json), settings, and sessions directory.
+ * The implicit "default" namespace is ~/.pi/agent (unchanged); named namespaces
+ * live under ~/.pi/namespaces/<name>/agent. Name validation matches this pattern.
+ */
+export const NAMESPACE_NAME_PATTERN = /^[a-z0-9_-]{1,32}$/;
+
+export function isValidNamespaceName(name: string): boolean {
+	return NAMESPACE_NAME_PATTERN.test(name);
+}
+
+/**
+ * Agent dir for a named (non-default) namespace. Callers must not call this for
+ * "default". Asserts the name against NAMESPACE_NAME_PATTERN as a hard defense-
+ * in-depth check: every REST entry point must already validate/normalize the
+ * namespace before it gets here, but a rejected name here can never turn into a
+ * path.join escape out of ~/.pi/namespaces.
+ */
+export function getNamespaceAgentDir(name: string): string {
+	if (!isValidNamespaceName(name)) {
+		throw new Error(`Invalid namespace name: ${name}`);
+	}
+	return join(getPiBaseDir(), "namespaces", name, "agent");
 }
 
 export function getSocketPath(): string {

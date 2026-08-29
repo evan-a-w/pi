@@ -37,8 +37,11 @@ function toInstanceSummary(instance: InstanceRecord, webPort?: number): Instance
 		label: instance.label,
 		sessionId: instance.sessionId,
 		sessionFile: instance.sessionFile,
+		sessionName: instance.sessionName,
 		radiusPiId: instance.radiusPiId,
 		webPort,
+		pinned: instance.pinned,
+		archived: instance.archived,
 	};
 }
 

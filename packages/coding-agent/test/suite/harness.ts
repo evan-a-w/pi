@@ -72,6 +72,8 @@ export interface HarnessOptions {
 	extensionFactories?: Array<InlineExtension | CreateTestExtensionsResultInput>;
 	withConfiguredAuth?: boolean;
 	modelsJson?: Record<string, unknown>;
+	/** Defaults to an in-memory session. Pass a file-backed manager to test session-file-dependent paths. */
+	sessionManager?: SessionManager;
 }
 
 export interface Harness {
@@ -109,8 +111,12 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 	const withConfiguredAuth = options.withConfiguredAuth ?? true;
 	const extensionRunnerRef: { current?: ExtensionRunner } = {};
 
-	const sessionManager = SessionManager.inMemory();
-	const settingsManager = SettingsManager.inMemory(options.settings);
+	const sessionManager = options.sessionManager ?? SessionManager.inMemory();
+	// Auto session naming fires a background completion against the same faux
+	// response queue as the test's own prompts; default it off here so unrelated
+	// tests aren't affected by an extra queued-response consumer. Tests exercising
+	// the feature opt back in via settings.autoNameSession.
+	const settingsManager = SettingsManager.inMemory({ autoNameSession: false, ...options.settings });
 
 	const authStorage = AuthStorage.inMemory();
 	if (withConfiguredAuth) {

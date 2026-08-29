@@ -7,6 +7,7 @@ export default defineConfig({
 		proxy: {
 			"/ws": { target: "http://localhost:4464", ws: true },
 			"/theme": { target: "http://localhost:4464" },
+			"/themes": { target: "http://localhost:4464" },
 		},
 	},
 	build: {

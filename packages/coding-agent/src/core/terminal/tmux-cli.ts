@@ -7,6 +7,7 @@
 
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
+import { delimiter, join } from "node:path";
 
 /** Minimum tmux version supporting `resize-window` on a detached session. */
 const MIN_TMUX_VERSION = 2.9;
@@ -34,6 +35,18 @@ export function findTmux(): string | null {
 	}
 
 	for (const candidate of ["/usr/bin/tmux", "/usr/local/bin/tmux", "/opt/homebrew/bin/tmux"]) {
+		if (existsSync(candidate)) {
+			cachedTmuxPath = candidate;
+			return cachedTmuxPath;
+		}
+	}
+
+	// Fall back to a PATH search, so a tmux installed via nix, linuxbrew, asdf, or any
+	// other non-default prefix is still found even though it isn't one of the hardcoded
+	// candidates above.
+	for (const dir of (process.env.PATH ?? "").split(delimiter)) {
+		if (!dir) continue;
+		const candidate = join(dir, "tmux");
 		if (existsSync(candidate)) {
 			cachedTmuxPath = candidate;
 			return cachedTmuxPath;

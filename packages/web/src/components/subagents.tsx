@@ -12,6 +12,7 @@ import {
 	subagentLoading,
 	subagentRuns,
 	subagentView,
+	tuiActive,
 } from "../state.ts";
 import { MarkdownView } from "./markdown-view.tsx";
 
@@ -200,6 +201,11 @@ export function SubagentsPanel() {
 	if (runs.length === 0) {
 		return (
 			<div class="subagents-panel">
+				{tuiActive.value ? (
+					<div class="subagents-tui-note">
+						TUI is still attached in the background; chat is blocked until it closes.
+					</div>
+				) : null}
 				<div class="subagents-empty">
 					No subagent runs found in this project. Ask pi to delegate work (e.g. “Use scout to investigate this
 					code”) and runs will appear here with their transcripts.
@@ -213,10 +219,16 @@ export function SubagentsPanel() {
 
 	return (
 		<div class="subagents-panel">
+			{tuiActive.value ? (
+				<div class="subagents-tui-note">
+					TUI is still attached in the background; chat is blocked until it closes.
+				</div>
+			) : null}
 			<div class="subagents-tabs">
 				{runs.map((run) => (
 					<button
 						type="button"
+						key={run.key}
 						class={`subagents-tab ${run.key === selectedKey ? "active" : ""}`}
 						title={`${run.agent} · ${run.runId} · ${STATUS_LABEL[run.status]}`}
 						onClick={() => void selectSubagentRun(run.key)}
@@ -262,6 +274,12 @@ export function SubagentsPanel() {
 					</div>
 					<div class="subagents-content">
 						{loading && !file ? <div class="subagents-loading">Loading…</div> : null}
+						{!loading && !file && view === "transcript" && !selected.transcriptPath ? (
+							<div class="subagents-empty">No transcript available for this run.</div>
+						) : null}
+						{!loading && !file && view === "output" && !hasOutput ? (
+							<div class="subagents-empty">No output available for this run.</div>
+						) : null}
 						{view === "outputs" && selected.outputs ? (
 							<div class="subagents-files">
 								{selected.outputs.map((output) => (

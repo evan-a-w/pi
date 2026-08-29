@@ -19,12 +19,18 @@ const REPLAY_LINES = 1000;
 export interface TmuxTerminalOptions {
 	/** Initial working directory for the shell. */
 	cwd: string;
-	/** Shell to run. Defaults to the user's $SHELL, then /bin/bash. */
+	/** Shell to run. Defaults to the user's $SHELL, then /bin/bash. Ignored when `command` is set. */
 	shell?: string;
 	cols?: number;
 	rows?: number;
 	/** Environment for the shell. Defaults to the pi process environment. */
 	env?: NodeJS.ProcessEnv;
+	/**
+	 * Full argv to run instead of an interactive shell (program plus its
+	 * arguments, e.g. `[process.execPath, cliPath, "--session", file]`). Used by
+	 * the TUI terminal to attach a real pi interactive session instead of a shell.
+	 */
+	command?: string[];
 }
 
 export type TmuxTerminalSubscriber = (data: Buffer) => void;
@@ -79,7 +85,7 @@ export class TmuxTerminal {
 	}
 
 	private async start(): Promise<void> {
-		const shell = resolveShell(this.options.shell);
+		const command = this.options.command ?? [resolveShell(this.options.shell), "-i"];
 
 		// Create the session detached first, as a one-shot command. Combining this
 		// with -C would exit immediately: a control client started with -d has
@@ -98,8 +104,7 @@ export class TmuxTerminal {
 			"-c",
 			this.options.cwd,
 			"--",
-			shell,
-			"-i",
+			...command,
 		]);
 		if (created.exitCode !== 0) {
 			throw new Error(`Failed to create tmux session: ${created.stderr.trim() || `exit ${created.exitCode}`}`);

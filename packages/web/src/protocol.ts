@@ -247,7 +247,13 @@ export type RpcCommand =
 	| { id?: string; type: "terminal_open"; cols?: number; rows?: number }
 	| { id?: string; type: "terminal_input"; data: string }
 	| { id?: string; type: "terminal_resize"; cols: number; rows: number }
-	| { id?: string; type: "terminal_close" };
+	| { id?: string; type: "terminal_close" }
+	// TUI: the real pi interactive TUI attached to this session, same wire shape
+	// as terminal_* above.
+	| { id?: string; type: "tui_open"; cols?: number; rows?: number }
+	| { id?: string; type: "tui_input"; data: string }
+	| { id?: string; type: "tui_resize"; cols: number; rows: number }
+	| { id?: string; type: "tui_close" };
 
 export interface TerminalOpenData {
 	termId: string;
@@ -290,6 +296,9 @@ export type AgentSessionEvent =
 	| { type: "bash_execution_update"; id?: string; delta: string }
 	| { type: "terminal_output"; data: string }
 	| { type: "terminal_exit"; reason?: string }
+	| { type: "tui_output"; data: string }
+	| { type: "tui_exit"; reason?: string }
+	| { type: "session_reloaded" }
 	| { type: "tool_execution_start"; toolCallId: string; toolName: string; args: Record<string, unknown> }
 	| {
 			type: "tool_execution_update";

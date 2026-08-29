@@ -4,17 +4,22 @@ import { Editor } from "./components/editor.tsx";
 import { Footer } from "./components/footer.tsx";
 import { MarkdownView } from "./components/markdown-view.tsx";
 import { ForkPicker, ModelPicker } from "./components/pickers.tsx";
+import { PinnedSidebar } from "./components/sidebar.tsx";
 import { SubagentsPanel } from "./components/subagents.tsx";
-import { TerminalView } from "./components/terminal.tsx";
+import { TerminalView, TuiView } from "./components/terminal.tsx";
 import {
 	activePanel,
 	commandResult,
 	connected,
+	currentNamespace,
 	instanceId,
 	sessionState,
+	sessionUnreachable,
 	subagentRuns,
 	terminalOpen,
 	toggleSubagentsPanel,
+	toggleTui,
+	tuiActive,
 	widgets,
 } from "./state.ts";
 
@@ -33,6 +38,7 @@ function Header() {
 				</svg>
 			</a>
 			<span class="header-title">{name ? `pi — ${name}` : "pi"}</span>
+			{currentNamespace.value ? <span class="header-namespace-tag">{currentNamespace.value}</span> : null}
 			{cwd ? (
 				<a
 					href={`/review?cwd=${encodeURIComponent(cwd)}${instanceId ? `&instance=${encodeURIComponent(instanceId)}` : ""}`}
@@ -72,6 +78,14 @@ function Header() {
 				}}
 			>
 				{">_"}
+			</button>
+			<button
+				type="button"
+				class={`header-terminal ${tuiActive.value ? "active" : ""}`}
+				title="Toggle TUI"
+				onClick={() => void toggleTui()}
+			>
+				tui
 			</button>
 			<span
 				class={`connection-dot ${isConnected ? "online" : "offline"}`}
@@ -118,27 +132,49 @@ function CommandResultCard() {
 	);
 }
 
-export function App() {
+function UnreachableView() {
 	return (
-		<div class="app">
-			<Header />
-			{activePanel.value === "subagents" ? (
-				<SubagentsPanel />
-			) : (
-				<>
-					<ChatList />
-					<CommandResultCard />
-					<WidgetArea placement="aboveEditor" />
-					<Editor />
-					<WidgetArea placement="belowEditor" />
-				</>
-			)}
-			<TerminalView />
-			<Footer />
-			<DialogHost />
-			<ToastHost />
-			<ModelPicker />
-			<ForkPicker />
+		<div class="unreachable-view">
+			<div class="unreachable-card">
+				<h1>Session not found</h1>
+				<p>This session is no longer running on the server.</p>
+				<a href="/" class="unreachable-home">
+					Go home
+				</a>
+			</div>
+		</div>
+	);
+}
+
+export function App() {
+	if (sessionUnreachable.value) {
+		return <UnreachableView />;
+	}
+	return (
+		<div class="app-shell">
+			<PinnedSidebar />
+			<div class="app">
+				<Header />
+				{activePanel.value === "subagents" ? (
+					<SubagentsPanel />
+				) : tuiActive.value ? (
+					<TuiView />
+				) : (
+					<>
+						<ChatList />
+						<CommandResultCard />
+						<WidgetArea placement="aboveEditor" />
+						<Editor />
+						<WidgetArea placement="belowEditor" />
+					</>
+				)}
+				<TerminalView />
+				<Footer />
+				<DialogHost />
+				<ToastHost />
+				<ModelPicker />
+				<ForkPicker />
+			</div>
 		</div>
 	);
 }

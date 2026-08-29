@@ -12,8 +12,17 @@ export interface RpcClientCallbacks {
 	onUiRequest(request: RpcExtensionUIRequest): void;
 	/** A dialog was answered by another client, timed out, or was aborted. */
 	onUiCancel(id: string): void;
-	onConnectionChange(connected: boolean): void;
+	/**
+	 * `closeCode` is the WebSocket close code when this transition came from a close
+	 * event (undefined on the initial/synthetic states). 4404 means the server-side
+	 * instance is definitively gone (see packages/server/src/web.ts); any other code
+	 * is a transient drop worth retrying.
+	 */
+	onConnectionChange(connected: boolean, closeCode?: number): void;
 }
+
+/** WS close code the server uses when the instance id does not resolve to a live instance. */
+export const INSTANCE_UNREACHABLE_CLOSE_CODE = 4404;
 
 const RESPONSE_TIMEOUT_MS = 60_000;
 const INITIAL_RECONNECT_DELAY_MS = 1_000;
@@ -92,12 +101,18 @@ export class RpcClient {
 		};
 		ws.onmessage = (event) => this.handleMessage(event);
 		ws.onerror = () => ws.close();
-		ws.onclose = () => {
+		ws.onclose = (event) => {
 			if (generation !== this.generation) return;
-			this.callbacks.onConnectionChange(false);
+			this.callbacks.onConnectionChange(false, event.code);
 			for (const [id, entry] of this.pending) {
 				clearTimeout(entry.timer);
 				this.pending.delete(id);
+			}
+			// The instance is definitively gone server-side; further reconnect attempts
+			// would just be closed with the same code forever.
+			if (event.code === INSTANCE_UNREACHABLE_CLOSE_CODE) {
+				this.stopped = true;
+				return;
 			}
 			if (!this.stopped) {
 				setTimeout(() => this.connect(), this.reconnectDelayMs);

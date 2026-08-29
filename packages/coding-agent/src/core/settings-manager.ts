@@ -126,6 +126,7 @@ export interface Settings {
 	httpProxy?: string; // Proxy URL applied as HTTP_PROXY and HTTPS_PROXY for Pi-managed HTTP clients; http(s):// or socks5(h):// (e.g. a VPN-backed SOCKS5 endpoint)
 	httpIdleTimeoutMs?: number; // HTTP header/body idle timeout in milliseconds; 0 disables it
 	websocketConnectTimeoutMs?: number; // WebSocket connect/open handshake timeout in milliseconds; 0 disables it
+	autoNameSession?: boolean; // default: true - generate a short title from the model after the first turn when the session has no name
 }
 
 /** Deep merge settings: project/overrides take precedence, nested objects merge recursively */
@@ -935,6 +936,10 @@ export class SettingsManager {
 		this.globalSettings.collapseChangelog = collapse;
 		this.markModified("collapseChangelog");
 		this.save();
+	}
+
+	getAutoNameSession(): boolean {
+		return this.settings.autoNameSession ?? true;
 	}
 
 	getEnableInstallTelemetry(): boolean {

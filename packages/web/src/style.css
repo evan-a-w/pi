@@ -57,14 +57,75 @@ body {
 	-webkit-font-smoothing: antialiased;
 }
 
+.app-shell {
+	display: flex;
+	height: 100dvh;
+}
+
 .app {
 	display: flex;
 	flex-direction: column;
 	height: 100dvh;
+	flex: 1;
+	min-width: 0;
 	max-width: 920px;
 	margin: 0 auto;
 	padding-left: env(safe-area-inset-left);
 	padding-right: env(safe-area-inset-right);
+}
+
+/* ============ Pinned sessions sidebar ============ */
+
+.pinned-sidebar {
+	width: 170px;
+	flex-shrink: 0;
+	overflow-y: auto;
+	border-right: 1px solid var(--pi-borderMuted);
+	padding: 10px 0;
+}
+
+.pinned-sidebar-title {
+	padding: 4px 12px 8px;
+	font-size: 11px;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	color: var(--pi-dim);
+}
+
+.pinned-sidebar-item {
+	display: block;
+	padding: 6px 12px;
+	font-size: 13px;
+	color: var(--pi-muted);
+	text-decoration: none;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.pinned-sidebar-item:hover {
+	background: var(--pi-bgHover);
+	color: var(--pi-fg);
+}
+
+.pinned-sidebar-item.current {
+	color: var(--pi-accent);
+	background: var(--pi-selectedBg);
+}
+
+/* Account namespace tag for a pinned entry that is not the implicit default namespace. */
+.pinned-sidebar-item-ns {
+	margin-left: 6px;
+	font-size: 10px;
+	color: var(--pi-dim);
+}
+
+/* Slim sidebar only; on narrow screens it would crowd the chat area, so it's
+   hidden rather than squeezed. */
+@media (max-width: 900px) {
+	.pinned-sidebar {
+		display: none;
+	}
 }
 
 /* ============ Header ============ */
@@ -101,6 +162,17 @@ body {
 	flex: 1;
 }
 
+/* Account namespace (pi-server concept) this session runs under, shown only
+   when it is not the implicit default namespace. */
+.header-namespace-tag {
+	flex-shrink: 0;
+	font-size: 11px;
+	padding: 1px 6px;
+	border-radius: 3px;
+	border: 1px solid var(--pi-borderMuted);
+	color: var(--pi-dim);
+}
+
 .connection-dot {
 	width: 8px;
 	height: 8px;
@@ -120,6 +192,48 @@ body {
 @keyframes pulse {
 	0%, 100% { opacity: 1; }
 	50% { opacity: 0.3; }
+}
+
+/* ============ Unreachable session (definitively-gone instance, ws close 4404) ============ */
+
+.unreachable-view {
+	align-items: center;
+	display: flex;
+	height: 100dvh;
+	justify-content: center;
+	padding: 24px;
+}
+
+.unreachable-card {
+	max-width: 360px;
+	text-align: center;
+}
+
+.unreachable-card h1 {
+	color: var(--pi-text);
+	font-size: 18px;
+	margin: 0 0 8px;
+}
+
+.unreachable-card p {
+	color: var(--pi-muted);
+	font-size: 14px;
+	margin: 0 0 20px;
+}
+
+.unreachable-home {
+	background: var(--pi-selectedBg);
+	border: 1px solid var(--pi-borderMuted);
+	border-radius: 4px;
+	color: var(--pi-text);
+	display: inline-block;
+	padding: 8px 16px;
+	text-decoration: none;
+}
+
+.unreachable-home:hover {
+	border-color: var(--pi-accent);
+	color: var(--pi-accent);
 }
 
 /* ============ Chat ============ */
@@ -407,6 +521,45 @@ body {
 	background: transparent;
 	padding: 0;
 	color: var(--pi-text);
+}
+
+/* Copy buttons: hover-revealed on message chunks and code blocks. */
+.copy-wrap {
+	position: relative;
+}
+
+.copy-btn {
+	position: absolute;
+	top: 2px;
+	right: 2px;
+	z-index: 2;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	padding: 4px;
+	background: var(--pi-cardBg);
+	color: var(--pi-textMuted);
+	border: 1px solid var(--pi-borderMuted);
+	border-radius: 4px;
+	cursor: pointer;
+	opacity: 0;
+	transition: opacity 0.15s;
+}
+
+.copy-wrap:hover .copy-btn,
+.copy-btn:focus-visible {
+	opacity: 1;
+}
+
+.copy-btn:hover {
+	color: var(--pi-text);
+}
+
+/* Touch screens have no hover; keep the button faintly visible. */
+@media (hover: none) {
+	.copy-btn {
+		opacity: 0.55;
+	}
 }
 
 .md blockquote {
@@ -1038,7 +1191,43 @@ select.theme-toggle {
 	color: var(--pi-text);
 }
 
+.terminal-host-wrap {
+	display: flex;
+	flex: 1 1 auto;
+	min-height: 0;
+	position: relative;
+}
+
 .terminal-host {
+	flex: 1 1 auto;
+	min-height: 0;
+	padding: 4px 6px;
+}
+
+.terminal-status-overlay {
+	align-items: center;
+	background: color-mix(in srgb, var(--pi-cardBg) 85%, transparent);
+	color: var(--pi-muted);
+	display: flex;
+	font-size: 13px;
+	inset: 0;
+	justify-content: center;
+	pointer-events: none;
+	position: absolute;
+}
+
+/* ============================================================================
+   TUI view (real pi interactive TUI, replaces the chat area while active)
+   ========================================================================== */
+
+.tui-view {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	min-height: 0;
+}
+
+.tui-host {
 	flex: 1 1 auto;
 	min-height: 0;
 	padding: 4px 6px;
@@ -1121,6 +1310,15 @@ select.theme-toggle {
 	color: var(--pi-muted);
 	font-size: 13px;
 	padding: 24px;
+}
+
+.subagents-tui-note {
+	background: var(--pi-toolPendingBg);
+	border-bottom: 1px solid var(--pi-borderMuted);
+	color: var(--pi-muted);
+	flex: 0 0 auto;
+	font-size: 12px;
+	padding: 6px 12px;
 }
 
 .subagents-tabs {

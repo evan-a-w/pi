@@ -114,10 +114,23 @@ export interface LabelEntry extends SessionEntryBase {
 	label: string | undefined;
 }
 
-/** Session metadata entry (e.g., user-defined display name). */
+/**
+ * Session metadata entry (e.g., user-defined display name).
+ *
+ * `autoNamed` marks an entry written by the model-generated title feature
+ * (agent-session.ts _maybeAutoNameSession), as opposed to an explicit user
+ * rename. It is used to persist the "auto-naming already attempted" state
+ * (see SessionManager.wasAutoNamingAttempted) across process restarts, resumes,
+ * and session reloads, independent of whether generation produced a name: a
+ * reservation entry with `autoNamed: true` and no name marks an attempt that is
+ * in flight or failed, so it is never retried. A later entry without
+ * `autoNamed` (a real user rename, including an explicit clear to an empty
+ * name) resets that state, allowing auto-naming to run again.
+ */
 export interface SessionInfoEntry extends SessionEntryBase {
 	type: "session_info";
 	name?: string;
+	autoNamed?: boolean;
 }
 
 /**
@@ -1133,7 +1146,7 @@ export class SessionManager {
 	}
 
 	/** Append a session info entry (e.g., display name). Returns entry id. */
-	appendSessionInfo(name: string): string {
+	appendSessionInfo(name: string, options?: { autoNamed?: boolean }): string {
 		const sanitizedName = name.replace(/[\r\n]+/g, " ").trim();
 		const entry: SessionInfoEntry = {
 			type: "session_info",
@@ -1141,6 +1154,7 @@ export class SessionManager {
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
 			name: sanitizedName,
+			autoNamed: options?.autoNamed,
 		};
 		this._appendEntry(entry);
 		return entry.id;
@@ -1158,6 +1172,25 @@ export class SessionManager {
 			}
 		}
 		return undefined;
+	}
+
+	/**
+	 * Whether model-generated auto-naming has already been attempted for this
+	 * session, per the latest session_info entry (see SessionInfoEntry.autoNamed).
+	 * Callers use this together with getSessionName() to enforce "auto-named at
+	 * most once ever": skip if either a name is already set or an attempt (even a
+	 * failed one) was already recorded. A user rename or explicit clear (an entry
+	 * without `autoNamed`) resets this, allowing one more auto-naming attempt.
+	 */
+	wasAutoNamingAttempted(): boolean {
+		const entries = this.getEntries();
+		for (let i = entries.length - 1; i >= 0; i--) {
+			const entry = entries[i];
+			if (entry.type === "session_info") {
+				return Boolean(entry.autoNamed);
+			}
+		}
+		return false;
 	}
 
 	/**
@@ -1677,7 +1710,20 @@ export class SessionManager {
 			typeof sessionDirOrOnProgress === "string" ? normalizePath(sessionDirOrOnProgress) : undefined;
 		const progress = typeof sessionDirOrOnProgress === "function" ? sessionDirOrOnProgress : onProgress;
 		if (customSessionDir) {
+			// Mirror the default branch below: session files live one level down in
+			// per-cwd subdirectories (plus any flat legacy files in the dir itself).
 			const sessions = await listSessionsFromDir(customSessionDir, progress);
+			try {
+				if (existsSync(customSessionDir)) {
+					const entries = await readdir(customSessionDir, { withFileTypes: true });
+					for (const entry of entries) {
+						if (!entry.isDirectory()) continue;
+						sessions.push(...(await listSessionsFromDir(join(customSessionDir, entry.name))));
+					}
+				}
+			} catch {
+				// Unreadable subdirectories are skipped; flat results still apply.
+			}
 			sessions.sort((a, b) => b.modified.getTime() - a.modified.getTime());
 			return sessions;
 		}

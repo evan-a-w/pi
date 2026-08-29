@@ -12,6 +12,8 @@
  */
 
 import * as crypto from "node:crypto";
+import type { FSWatcher } from "node:fs";
+import { basename, dirname } from "node:path";
 import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
 import type {
 	ExtensionUIContext,
@@ -19,12 +21,9 @@ import type {
 	ExtensionWidgetOptions,
 	WorkingIndicatorOptions,
 } from "../../core/extensions/index.ts";
-import {
-	disposeTerminal,
-	getExistingTerminal,
-	getOrCreateTerminal,
-	type TmuxTerminal,
-} from "../../core/terminal/index.ts";
+import { resolvePiSelfInvocation } from "../../core/self-invocation.ts";
+import { disposeTerminal, getExistingTerminal, getOrCreateTerminal, TmuxTerminal } from "../../core/terminal/index.ts";
+import { closeWatcher, watchWithErrorHandler } from "../../utils/fs-watch.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
 import {
 	RPC_BUILTIN_COMMANDS,
@@ -63,7 +62,27 @@ export interface RpcBridgeOptions {
 	 * can then still be offered to RPC clients via offerDialog().
 	 */
 	bindExtensions?: boolean;
+	/**
+	 * Override the argv used to spawn the TUI terminal (tui_open). Defaults to
+	 * relaunching pi itself attached to the current session file. Tests inject
+	 * a lightweight stand-in so they do not need a real model or provider.
+	 */
+	resolveTuiCommand?: (context: { sessionFile: string; cwd: string }) => string[];
 }
+
+function defaultResolveTuiCommand(context: { sessionFile: string }): string[] {
+	const invocation = resolvePiSelfInvocation();
+	return [invocation.command, ...invocation.args, "--session", context.sessionFile];
+}
+
+/**
+ * How long to wait after the session file changes before reloading it while a
+ * TUI is attached. The TUI writes one jsonl line per entry (messages, tool
+ * calls, model/thinking changes, ...) which can arrive in quick bursts while
+ * streaming; debouncing avoids tearing the session down and rebuilding it on
+ * every single line.
+ */
+const SESSION_FILE_WATCH_DEBOUNCE_MS = 300;
 
 function success<T extends RpcCommand["type"]>(id: string | undefined, command: T, data?: object | null): RpcResponse {
 	if (data === undefined) {
@@ -103,6 +122,35 @@ export class RpcBridge {
 	 * deliberately outside the session graph, so rebindSession() must not touch it.
 	 */
 	private unsubscribeTerminal: (() => void) | undefined;
+	/**
+	 * The TUI terminal (tui_open/tui_input/tui_resize/tui_close): a real pi
+	 * interactive process attached to this bridge's current session file.
+	 * Session-scoped and owned by this bridge, unlike the process-scoped shell
+	 * terminal above, so it is not touched by rebindSession() either: switching
+	 * sessions while a TUI is attached is prevented by the blocking guard on
+	 * write commands, and the TUI's own exit/close paths trigger the reload.
+	 */
+	private tuiTerminal: TmuxTerminal | undefined;
+	/**
+	 * Set synchronously for the duration of TmuxTerminal.create() in tui_open, before
+	 * `this.tuiTerminal` is assigned. Two purposes: dedupes concurrent tui_open calls
+	 * (mirrors terminal-manager.ts's getOrCreateTerminal), and closes the TOCTOU window
+	 * where a write command could slip in between the streaming/compacting check and the
+	 * terminal actually being attached (isBlockedByTui treats this the same as a live
+	 * tuiTerminal).
+	 */
+	private tuiCreating: Promise<TmuxTerminal> | undefined;
+	private unsubscribeTui: (() => void) | undefined;
+	/**
+	 * Watches the session file while the TUI is attached, so the bridge's
+	 * in-memory state (and clients following it) catches up as the TUI writes to
+	 * it, rather than only on tui_close/tui_exit. Debounced; alive only while
+	 * tuiTerminal is alive.
+	 */
+	private sessionFileWatcher: FSWatcher | undefined;
+	private sessionFileWatchTimer: ReturnType<typeof setTimeout> | undefined;
+	/** Serializes reloadSessionFromDisk() calls so a watch-triggered reload never overlaps a tui_close/tui_exit one. */
+	private sessionReloadQueue: Promise<void> = Promise.resolve();
 
 	private readonly options: RpcBridgeOptions;
 
@@ -131,10 +179,16 @@ export class RpcBridge {
 		this.unsubscribeBackpressure?.();
 		this.unsubscribeTerminal?.();
 		this.unsubscribeTerminal = undefined;
+		this.unsubscribeTui?.();
+		this.unsubscribeTui = undefined;
+		this.stopWatchingSessionFile();
 		this.clients.clear();
 		// The terminal is scoped to the pi run; a graceful shutdown ends it so a
 		// tmux session is not leaked per run.
 		await disposeTerminal();
+		const tuiTerminal = this.tuiTerminal;
+		this.tuiTerminal = undefined;
+		await tuiTerminal?.dispose();
 	}
 
 	/**
@@ -155,6 +209,137 @@ export class RpcBridge {
 			unsubscribeOutput();
 			unsubscribeExit();
 		};
+	}
+
+	/**
+	 * Stream TUI output to all clients, same broadcast model as the shell
+	 * terminal above. Unlike the shell terminal, exit reloads the session from
+	 * disk: the TUI writes to the same session file this bridge holds open, so
+	 * in-memory state must catch up with whatever happened while it was attached.
+	 */
+	private attachTuiStream(terminal: TmuxTerminal): void {
+		if (this.unsubscribeTui) return;
+		const unsubscribeOutput = terminal.subscribe((data) => {
+			this.broadcast({ type: "tui_output", data: data.toString("base64") });
+		});
+		const unsubscribeExit = terminal.onExit((reason) => {
+			this.stopWatchingSessionFile();
+			this.broadcast({ type: "tui_exit", reason });
+			this.unsubscribeTui?.();
+			this.unsubscribeTui = undefined;
+			this.tuiTerminal = undefined;
+			void this.reloadSessionFromDisk();
+		});
+		this.unsubscribeTui = () => {
+			unsubscribeOutput();
+			unsubscribeExit();
+		};
+	}
+
+	/**
+	 * Watch the session file while the TUI is attached, so writes the TUI makes
+	 * (model/thinking changes, messages, ...) are picked up live instead of only
+	 * on tui_close/tui_exit. Watches the containing directory rather than the
+	 * file itself: a brand-new session's file does not exist on disk yet (it is
+	 * created lazily on first append), which would make `fs.watch` on the file
+	 * throw immediately, and watching the directory also survives the file being
+	 * replaced outright rather than appended to. Idempotent; a no-op if already
+	 * watching.
+	 */
+	private startWatchingSessionFile(sessionFile: string): void {
+		if (this.sessionFileWatcher) return;
+		const dir = dirname(sessionFile);
+		const fileName = basename(sessionFile);
+		this.sessionFileWatcher =
+			watchWithErrorHandler(
+				dir,
+				(_event, changedName) => {
+					// changedName is null on some platforms; reload rather than miss a change.
+					if (!changedName || changedName === fileName) this.scheduleSessionFileReload();
+				},
+				() => this.stopWatchingSessionFile(),
+			) ?? undefined;
+	}
+
+	private stopWatchingSessionFile(): void {
+		closeWatcher(this.sessionFileWatcher);
+		this.sessionFileWatcher = undefined;
+		if (this.sessionFileWatchTimer) {
+			clearTimeout(this.sessionFileWatchTimer);
+			this.sessionFileWatchTimer = undefined;
+		}
+	}
+
+	private scheduleSessionFileReload(): void {
+		if (this.sessionFileWatchTimer) {
+			clearTimeout(this.sessionFileWatchTimer);
+		}
+		this.sessionFileWatchTimer = setTimeout(() => {
+			this.sessionFileWatchTimer = undefined;
+			void this.reloadSessionWhileTuiAttached();
+		}, SESSION_FILE_WATCH_DEBOUNCE_MS);
+	}
+
+	/**
+	 * Reload triggered by the session file watcher, i.e. the TUI wrote to the
+	 * session while it is still attached (not exiting/closing). Broadcasts
+	 * `session_reloaded` so clients know to re-sync; tui_close/tui_exit already
+	 * have their own signal for that, so this only fires for the live case.
+	 */
+	private async reloadSessionWhileTuiAttached(): Promise<void> {
+		if (!this.tuiTerminal?.isAlive) return;
+		await this.reloadSessionFromDisk();
+		if (this.tuiTerminal?.isAlive) {
+			this.broadcast({ type: "session_reloaded" });
+		}
+	}
+
+	/**
+	 * Reload the current session from disk after the TUI (a separate process
+	 * with its own in-memory copy) exits, is closed, or writes to the session
+	 * file while still attached, so this bridge's state reflects whatever it
+	 * wrote. Reuses the same internal path as the `switch_session` command,
+	 * pointed at the same file. Calls are serialized so a watch-triggered reload
+	 * can never overlap the tui_close/tui_exit reload.
+	 */
+	private async reloadSessionFromDisk(): Promise<void> {
+		const run = this.sessionReloadQueue.then(() => this.performSessionReloadFromDisk());
+		this.sessionReloadQueue = run.catch(() => {});
+		return run;
+	}
+
+	private async performSessionReloadFromDisk(): Promise<void> {
+		const sessionFile = this.session.sessionFile;
+		if (!sessionFile) return;
+		const result = await this.runtimeHost.switchSession(sessionFile);
+		if (!result.cancelled) {
+			await this.rebindSession();
+		}
+	}
+
+	/**
+	 * Command types that mutate the session (its content, its file, or which file
+	 * this bridge points at) and therefore race with a TUI process writing to the
+	 * same session file. Reads (get_state, get_messages, ...) and bridge-local
+	 * settings (set_model, set_thinking_level, ...) are left open.
+	 */
+	private static readonly TUI_BLOCKED_COMMANDS: ReadonlySet<RpcCommand["type"]> = new Set<RpcCommand["type"]>([
+		"prompt",
+		"steer",
+		"follow_up",
+		"new_session",
+		"switch_session",
+		"fork",
+		"clone",
+		"change_cwd",
+		"compact",
+		"set_session_name",
+	]);
+
+	/** True while a TUI is attached (or being created) and `type` would race writes with it. */
+	private isBlockedByTui(type: RpcCommand["type"]): boolean {
+		const tuiAttached = Boolean(this.tuiTerminal?.isAlive) || this.tuiCreating !== undefined;
+		return tuiAttached && RpcBridge.TUI_BLOCKED_COMMANDS.has(type);
 	}
 
 	attachClient(connection: RpcClientConnection): RpcClientHandle {
@@ -522,6 +707,10 @@ export class RpcBridge {
 		const id = command.id;
 		const session = this.session;
 
+		if (this.isBlockedByTui(command.type)) {
+			return error(id, command.type, "TUI is attached to this session");
+		}
+
 		switch (command.type) {
 			// =================================================================
 			// Prompting
@@ -763,6 +952,134 @@ export class RpcBridge {
 				this.unsubscribeTerminal = undefined;
 				await disposeTerminal();
 				return success(id, "terminal_close");
+			}
+
+			// =================================================================
+			// TUI
+			//
+			// The real pi interactive TUI, attached to this same session file and
+			// running as a separate process in a tmux session (like the terminal
+			// above). Only one writer may touch the session at a time, so `prompt`,
+			// `steer` and `follow_up` are rejected while this is alive (see
+			// isBlockedByTui). Closing or exiting reloads the session from disk.
+			// =================================================================
+
+			case "tui_open": {
+				try {
+					if (this.tuiTerminal?.isAlive) {
+						// Reattach: resize to this client's viewport and replay scrollback.
+						if (command.cols !== undefined && command.rows !== undefined) {
+							await this.tuiTerminal.resize(command.cols, command.rows);
+						}
+						this.attachTuiStream(this.tuiTerminal);
+						const replay = await this.tuiTerminal.captureReplay();
+						const { cols, rows } = this.tuiTerminal.size;
+						return success(id, "tui_open", {
+							termId: this.tuiTerminal.id,
+							cols,
+							rows,
+							replay: Buffer.from(replay, "utf8").toString("base64"),
+						});
+					}
+
+					// A creation is already in flight (concurrent tui_open calls, e.g. two tabs
+					// racing to attach): await the same terminal instead of spawning a second one.
+					if (this.tuiCreating) {
+						const terminal = await this.tuiCreating;
+						if (command.cols !== undefined && command.rows !== undefined) {
+							await terminal.resize(command.cols, command.rows);
+						}
+						this.attachTuiStream(terminal);
+						const replay = await terminal.captureReplay();
+						const { cols, rows } = terminal.size;
+						return success(id, "tui_open", {
+							termId: terminal.id,
+							cols,
+							rows,
+							replay: Buffer.from(replay, "utf8").toString("base64"),
+						});
+					}
+
+					if (session.isStreaming || session.isCompacting) {
+						return error(id, "tui_open", "Cannot open the TUI while the session is streaming or compacting");
+					}
+
+					const sessionFile = session.sessionFile;
+					if (!sessionFile) {
+						return error(id, "tui_open", "TUI requires a persisted session (this session has no session file)");
+					}
+					const cwd = session.sessionManager.getCwd();
+					const resolveTuiCommand = this.options.resolveTuiCommand ?? defaultResolveTuiCommand;
+
+					// Set before the await so a second tui_open (or a write command gated by
+					// isBlockedByTui) landing before this resolves sees the in-flight creation
+					// rather than racing it. No await happens between here and the assignment
+					// below, so this is race-free despite the lack of a lock.
+					const creating = TmuxTerminal.create({
+						cwd,
+						cols: command.cols,
+						rows: command.rows,
+						env: { ...process.env, TERM: process.env.TERM || "xterm-256color" },
+						command: resolveTuiCommand({ sessionFile, cwd }),
+					}).then((terminal) => {
+						this.tuiTerminal = terminal;
+						this.attachTuiStream(terminal);
+						this.startWatchingSessionFile(sessionFile);
+						return terminal;
+					});
+					this.tuiCreating = creating;
+					let terminal: TmuxTerminal;
+					try {
+						terminal = await creating;
+					} finally {
+						if (this.tuiCreating === creating) this.tuiCreating = undefined;
+					}
+					const replay = await terminal.captureReplay();
+					const { cols, rows } = terminal.size;
+					return success(id, "tui_open", {
+						termId: terminal.id,
+						cols,
+						rows,
+						replay: Buffer.from(replay, "utf8").toString("base64"),
+					});
+				} catch (e) {
+					return error(id, "tui_open", e instanceof Error ? e.message : String(e));
+				}
+			}
+
+			case "tui_input": {
+				if (!this.tuiTerminal?.isAlive) {
+					return error(id, "tui_input", "No TUI is open");
+				}
+				await this.tuiTerminal.write(Buffer.from(command.data, "base64"));
+				return success(id, "tui_input");
+			}
+
+			case "tui_resize": {
+				if (!this.tuiTerminal?.isAlive) {
+					return error(id, "tui_resize", "No TUI is open");
+				}
+				await this.tuiTerminal.resize(command.cols, command.rows);
+				return success(id, "tui_resize");
+			}
+
+			case "tui_close": {
+				const terminal = this.tuiTerminal;
+				this.stopWatchingSessionFile();
+				this.unsubscribeTui?.();
+				this.unsubscribeTui = undefined;
+				this.tuiTerminal = undefined;
+				if (terminal) {
+					await terminal.dispose();
+				}
+				await this.reloadSessionFromDisk();
+				// Tell every other attached client (e.g. a second tab) that the TUI is gone
+				// and the session was reloaded, mirroring the exit path in attachTuiStream.
+				// The requesting client already knows from this response and handles it
+				// locally (see toggleTui in the web client), so it is excluded to avoid a
+				// duplicate toast/resync there.
+				this.broadcast({ type: "tui_exit", reason: "closed" }, client);
+				return success(id, "tui_close");
 			}
 
 			// =================================================================
