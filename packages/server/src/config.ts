@@ -72,6 +72,11 @@ export function getNamespacesRegistryPath(): string {
 	return join(getServerDir(), "namespaces.json");
 }
 
+/** Persisted dashboard settings: default working directory + text snippets (see settings.ts). */
+export function getDashboardSettingsPath(): string {
+	return join(getServerDir(), "dashboard-settings.json");
+}
+
 /**
  * Account namespaces: separate PI_CODING_AGENT_DIR trees so each namespace has
  * its own provider credentials (auth.json), settings, and sessions directory.

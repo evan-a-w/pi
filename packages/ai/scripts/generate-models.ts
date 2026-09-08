@@ -2391,6 +2391,20 @@ async function generateModels() {
 			contextWindow: CODEX_GPT_56_CONTEXT,
 			maxTokens: CODEX_MAX_TOKENS,
 		},
+		{
+			// Served to ChatGPT subscriptions but not yet listed by models.dev for
+			// openai-codex; pricing/limits mirror the openai gpt-6-astra entry.
+			id: "gpt-6-astra",
+			name: "GPT-6 Astra",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: CODEX_BASE_URL,
+			reasoning: true,
+			input: ["text", "image"],
+			cost: withOpenAiLongContextPricing({ input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 }),
+			contextWindow: 1050000,
+			maxTokens: 128000,
+		},
 	];
 	allModels.push(...codexModels);
 

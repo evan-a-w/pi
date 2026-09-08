@@ -18,6 +18,21 @@ export interface NamespaceRecord {
 	createdAt: string;
 }
 
+/** A saved reusable chunk of text, inserted into the chat composer from the snippet picker (packages/web). */
+export interface SnippetRecord {
+	id: string;
+	name: string;
+	text: string;
+}
+
+/** Persisted dashboard settings (see storage.ts loadDashboardSettings/saveDashboardSettings and settings.ts). */
+export interface DashboardSettings {
+	// Pre-fills the spawn form's working directory field. May contain a leading
+	// '~' (expanded server-side at spawn time, not validated here).
+	defaultCwd?: string;
+	snippets: SnippetRecord[];
+}
+
 export interface InstanceRecord {
 	id: string;
 	status: InstanceStatus;

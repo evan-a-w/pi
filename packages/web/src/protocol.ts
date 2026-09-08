@@ -207,6 +207,8 @@ export interface SubagentRunSummary {
 	transcriptBytes?: number;
 	outputPath?: string;
 	outputs?: Array<{ name: string; path: string; bytes: number }>;
+	/** True when only matched via the same-session-directory-tree fallback (see server). */
+	fromEarlierSession?: boolean;
 }
 
 export interface SubagentFileData {

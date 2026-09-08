@@ -109,16 +109,16 @@ export function DialogHost() {
 	return (
 		<div class="dialog-overlay">
 			{current.method === "select" && (
-				<SelectDialog request={current as RpcExtensionUIRequest & { method: "select" }} />
+				<SelectDialog key={current.id} request={current as RpcExtensionUIRequest & { method: "select" }} />
 			)}
 			{current.method === "confirm" && (
-				<ConfirmDialog request={current as RpcExtensionUIRequest & { method: "confirm" }} />
+				<ConfirmDialog key={current.id} request={current as RpcExtensionUIRequest & { method: "confirm" }} />
 			)}
 			{current.method === "input" && (
-				<InputDialog request={current as RpcExtensionUIRequest & { method: "input" }} />
+				<InputDialog key={current.id} request={current as RpcExtensionUIRequest & { method: "input" }} />
 			)}
 			{current.method === "editor" && (
-				<EditorDialog request={current as RpcExtensionUIRequest & { method: "editor" }} />
+				<EditorDialog key={current.id} request={current as RpcExtensionUIRequest & { method: "editor" }} />
 			)}
 		</div>
 	);

@@ -1,5 +1,5 @@
 import { computed, signal } from "@preact/signals";
-import { useRef } from "preact/hooks";
+import { useEffect, useRef } from "preact/hooks";
 import type { ImageContent, RpcSlashCommand } from "../protocol.ts";
 import {
 	editorText,
@@ -55,6 +55,58 @@ const pendingImages = signal<ImageContent[]>([]);
 const autocompleteIndex = signal(0);
 const autocompleteDismissed = signal(false);
 const sending = signal(false);
+
+// Snippet picker: reusable text chunks managed on the dashboard's /settings
+// page (server-persisted), inserted at the composer cursor - never auto-sent.
+interface Snippet {
+	id: string;
+	name: string;
+	text: string;
+}
+const SNIPPET_CACHE_MS = 30_000;
+const snippetPickerOpen = signal(false);
+const snippetQuery = signal("");
+const snippetIndex = signal(0);
+const snippets = signal<Snippet[]>([]);
+const snippetsLoading = signal(false);
+let snippetsFetchedAt = 0;
+
+async function loadSnippets(): Promise<void> {
+	if (Date.now() - snippetsFetchedAt < SNIPPET_CACHE_MS) return;
+	snippetsLoading.value = true;
+	try {
+		// Absolute path: works same-origin from under /i/<id>/.
+		const response = await fetch("/api/snippets", { cache: "no-store" });
+		if (!response.ok) throw new Error(`HTTP ${response.status}`);
+		const data = (await response.json()) as { ok?: boolean; snippets?: Snippet[] };
+		snippets.value = data.snippets ?? [];
+		snippetsFetchedAt = Date.now();
+	} catch (error) {
+		pushToast(`Failed to load snippets: ${error instanceof Error ? error.message : String(error)}`, "error");
+	} finally {
+		snippetsLoading.value = false;
+	}
+}
+
+const snippetMatches = computed(() => fuzzyFilter(snippets.value, snippetQuery.value, (snippet) => snippet.name));
+
+function insertAtCursor(textarea: HTMLTextAreaElement | null, text: string): void {
+	const current = editorText.value;
+	const start = textarea?.selectionStart ?? current.length;
+	const end = textarea?.selectionEnd ?? current.length;
+	const before = current.slice(0, start);
+	const after = current.slice(end);
+	// Keep the snippet on its own line boundary when dropped mid-text.
+	const lead = before.length > 0 && !before.endsWith("\n") ? "\n" : "";
+	const trail = after.length > 0 && !after.startsWith("\n") ? "\n" : "";
+	editorText.value = `${before}${lead}${text}${trail}${after}`;
+	const caret = before.length + lead.length + text.length;
+	queueMicrotask(() => {
+		if (!textarea) return;
+		textarea.focus();
+		textarea.setSelectionRange(caret, caret);
+	});
+}
 
 function fuzzyMatch(query: string, text: string): { matches: boolean; score: number } {
 	const queryLower = query.toLowerCase();
@@ -261,12 +313,66 @@ async function send(): Promise<void> {
 
 export function Editor() {
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
+	const pickerRef = useRef<HTMLDivElement>(null);
 
 	const autoGrow = () => {
 		const el = textareaRef.current;
 		if (!el) return;
 		el.style.height = "auto";
 		el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+	};
+
+	const closeSnippetPicker = () => {
+		snippetPickerOpen.value = false;
+		snippetQuery.value = "";
+		snippetIndex.value = 0;
+	};
+
+	const chooseSnippet = (snippet: Snippet) => {
+		insertAtCursor(textareaRef.current, snippet.text);
+		closeSnippetPicker();
+		queueMicrotask(autoGrow);
+	};
+
+	const openSnippetPicker = () => {
+		snippetPickerOpen.value = true;
+		snippetIndex.value = 0;
+		void loadSnippets();
+	};
+
+	// Close on outside click.
+	useEffect(() => {
+		if (!snippetPickerOpen.value) return;
+		const onMouseDown = (event: MouseEvent) => {
+			if (!pickerRef.current?.contains(event.target as Node)) closeSnippetPicker();
+		};
+		document.addEventListener("mousedown", onMouseDown);
+		return () => document.removeEventListener("mousedown", onMouseDown);
+	}, [snippetPickerOpen.value]);
+
+	const handleSnippetKeyDown = (event: KeyboardEvent) => {
+		const matches = snippetMatches.value;
+		if (event.key === "Escape") {
+			event.preventDefault();
+			closeSnippetPicker();
+			textareaRef.current?.focus();
+			return;
+		}
+		if (event.key === "ArrowDown" && matches.length > 0) {
+			event.preventDefault();
+			snippetIndex.value = (snippetIndex.value + 1) % matches.length;
+			return;
+		}
+		if (event.key === "ArrowUp" && matches.length > 0) {
+			event.preventDefault();
+			snippetIndex.value = (snippetIndex.value - 1 + matches.length) % matches.length;
+			return;
+		}
+		if (event.key === "Enter") {
+			event.preventDefault();
+			const selected = matches[Math.min(snippetIndex.value, matches.length - 1)];
+			if (selected) chooseSnippet(selected);
+		}
 	};
 
 	const handleKeyDown = (event: KeyboardEvent) => {
@@ -382,6 +488,57 @@ export function Editor() {
 				</div>
 			)}
 			<div class="editor-row">
+				{snippetPickerOpen.value && (
+					<div class="snippet-picker" ref={pickerRef}>
+						<input
+							type="text"
+							class="snippet-filter"
+							placeholder="Filter snippets…"
+							value={snippetQuery.value}
+							// biome-ignore lint/a11y/noAutofocus: the picker is an explicitly opened popover
+							autoFocus
+							onInput={(event) => {
+								snippetQuery.value = (event.target as HTMLInputElement).value;
+								snippetIndex.value = 0;
+							}}
+							onKeyDown={handleSnippetKeyDown}
+						/>
+						<div class="snippet-list">
+							{snippetsLoading.value && snippets.value.length === 0 ? (
+								<div class="snippet-empty">Loading…</div>
+							) : snippets.value.length === 0 ? (
+								<div class="snippet-empty">
+									No snippets yet — add some in <a href="/settings">Settings</a>
+								</div>
+							) : snippetMatches.value.length === 0 ? (
+								<div class="snippet-empty">No matches</div>
+							) : (
+								snippetMatches.value.map((snippet, index) => (
+									<button
+										key={snippet.id}
+										type="button"
+										class={`snippet-entry ${index === Math.min(snippetIndex.value, snippetMatches.value.length - 1) ? "selected" : ""}`}
+										onMouseDown={(event) => {
+											event.preventDefault();
+											chooseSnippet(snippet);
+										}}
+									>
+										<span class="snippet-name">{snippet.name}</span>
+										<span class="snippet-preview">{snippet.text.split("\n")[0]}</span>
+									</button>
+								))
+							)}
+						</div>
+					</div>
+				)}
+				<button
+					type="button"
+					class={`editor-button snippets ${snippetPickerOpen.value ? "active" : ""}`}
+					title="Insert snippet"
+					onClick={() => (snippetPickerOpen.value ? closeSnippetPicker() : openSnippetPicker())}
+				>
+					{"{}"}
+				</button>
 				<textarea
 					ref={textareaRef}
 					class="editor-input"

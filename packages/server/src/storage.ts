@@ -1,6 +1,12 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { getInstancesPath, getMachinePath, getNamespacesRegistryPath, getServerDir } from "./config.ts";
-import type { InstanceRecord, MachineRecord, NamespaceRecord } from "./types.ts";
+import {
+	getDashboardSettingsPath,
+	getInstancesPath,
+	getMachinePath,
+	getNamespacesRegistryPath,
+	getServerDir,
+} from "./config.ts";
+import type { DashboardSettings, InstanceRecord, MachineRecord, NamespaceRecord } from "./types.ts";
 
 function ensureServerDir(): void {
 	const serverDir = getServerDir();
@@ -86,6 +92,40 @@ export function saveNamespaces(namespaces: NamespaceRecord[]): void {
 	const tmpPath = `${registryPath}.${process.pid}.${Date.now()}.tmp`;
 	writeFileSync(tmpPath, JSON.stringify(namespaces, null, 2));
 	renameSync(tmpPath, registryPath);
+}
+
+export function loadDashboardSettings(): DashboardSettings {
+	const settingsPath = getDashboardSettingsPath();
+	if (!existsSync(settingsPath)) {
+		return { snippets: [] };
+	}
+
+	const data = readFileSync(settingsPath, "utf-8");
+	return JSON.parse(data) as DashboardSettings;
+}
+
+/** Write via temp-file + rename, same reasoning as saveNamespaces. */
+export function saveDashboardSettings(settings: DashboardSettings): void {
+	ensureServerDir();
+	const settingsPath = getDashboardSettingsPath();
+	const tmpPath = `${settingsPath}.${process.pid}.${Date.now()}.tmp`;
+	writeFileSync(tmpPath, JSON.stringify(settings, null, 2));
+	renameSync(tmpPath, settingsPath);
+}
+
+let settingsLockHeld = false;
+
+/** Same purpose as withNamespacesLock, scoped to dashboard-settings.json read-modify-write cycles. */
+export function withSettingsLock<T>(fn: () => T): T {
+	if (settingsLockHeld) {
+		throw new Error("Dashboard settings are already being modified; concurrent write attempted");
+	}
+	settingsLockHeld = true;
+	try {
+		return fn();
+	} finally {
+		settingsLockHeld = false;
+	}
 }
 
 let namespacesLockHeld = false;

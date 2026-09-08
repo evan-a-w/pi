@@ -81,6 +81,26 @@ interface TranscriptLine {
 /** Cap per-entry text so huge tool outputs stay readable in the panel. */
 const MAX_ENTRY_CHARS = 4_000;
 
+/**
+ * Extract readable text from a standard agent session-record `message` field
+ * (`{role, content: [{type: "text", text}, ...]}` or a plain string), used as a
+ * fallback when a line has no top-level `text` (workflow-mode transcripts are the
+ * child's own session .jsonl, not the flat pi-subagents artifact shape below).
+ */
+function extractMessageText(message: unknown): string | undefined {
+	if (!message || typeof message !== "object") return undefined;
+	const content = (message as Record<string, unknown>).content;
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return undefined;
+	const parts: string[] = [];
+	for (const part of content) {
+		if (part && typeof part === "object" && typeof (part as Record<string, unknown>).text === "string") {
+			parts.push((part as Record<string, unknown>).text as string);
+		}
+	}
+	return parts.length > 0 ? parts.join("\n") : undefined;
+}
+
 function parseTranscript(content: string): TranscriptLine[] {
 	const lines: TranscriptLine[] = [];
 	for (const rawLine of content.split("\n")) {
@@ -88,11 +108,25 @@ function parseTranscript(content: string): TranscriptLine[] {
 		if (!line) continue;
 		try {
 			const data = JSON.parse(line) as Record<string, unknown>;
+			const message = data.message as Record<string, unknown> | undefined;
 			const ts =
 				typeof data.ts === "number" ? data.ts : typeof data.timestamp === "string" ? Date.parse(data.timestamp) : 0;
-			const text = typeof data.text === "string" && data.text.trim().length > 0 ? data.text.trim() : undefined;
-			const role = typeof data.role === "string" && data.role ? data.role : "event";
-			const event = typeof data.sourceEventType === "string" ? data.sourceEventType : "";
+			const text =
+				typeof data.text === "string" && data.text.trim().length > 0
+					? data.text.trim()
+					: extractMessageText(message)?.trim();
+			const role =
+				typeof data.role === "string" && data.role
+					? data.role
+					: typeof message?.role === "string" && message.role
+						? (message.role as string)
+						: "event";
+			const event =
+				typeof data.sourceEventType === "string"
+					? data.sourceEventType
+					: typeof data.type === "string"
+						? data.type
+						: "";
 			const metaBits: string[] = [];
 			if (typeof data.model === "string") metaBits.push(data.model);
 			if (typeof data.toolName === "string") metaBits.push(`tool:${data.toolName}`);
@@ -180,6 +214,12 @@ function RunMeta({ run }: { run: SubagentRunSummary }) {
 			</div>
 			{run.task ? <div class="subagents-task">{run.task}</div> : null}
 			{run.error ? <div class="subagents-error">{run.error}</div> : null}
+			{run.fromEarlierSession ? (
+				<div class="subagents-stale-note">
+					From an earlier session state (fork/new session/reload changed the active session file since this run
+					started).
+				</div>
+			) : null}
 		</div>
 	);
 }
@@ -216,6 +256,7 @@ export function SubagentsPanel() {
 
 	const hasOutput = selected?.outputPath !== undefined;
 	const hasFiles = (selected?.outputs?.length ?? 0) > 0;
+	const earlierSessionCount = runs.filter((run) => run.fromEarlierSession).length;
 
 	return (
 		<div class="subagents-panel">
@@ -224,18 +265,25 @@ export function SubagentsPanel() {
 					TUI is still attached in the background; chat is blocked until it closes.
 				</div>
 			) : null}
+			{earlierSessionCount > 0 ? (
+				<div class="subagents-tui-note">
+					{earlierSessionCount} run{earlierSessionCount === 1 ? "" : "s"} from an earlier session state (marked
+					below).
+				</div>
+			) : null}
 			<div class="subagents-tabs">
 				{runs.map((run) => (
 					<button
 						type="button"
 						key={run.key}
 						class={`subagents-tab ${run.key === selectedKey ? "active" : ""}`}
-						title={`${run.agent} · ${run.runId} · ${STATUS_LABEL[run.status]}`}
+						title={`${run.agent} · ${run.runId} · ${STATUS_LABEL[run.status]}${run.fromEarlierSession ? " · earlier session" : ""}`}
 						onClick={() => void selectSubagentRun(run.key)}
 					>
 						<span class={`status-dot ${run.status}`} />
 						<span class="subagents-tab-agent">{run.agent}</span>
 						<span class="subagents-tab-runid">{run.runId.slice(0, 6)}</span>
+						{run.fromEarlierSession ? <span class="subagents-tab-stale">⏴</span> : null}
 					</button>
 				))}
 			</div>

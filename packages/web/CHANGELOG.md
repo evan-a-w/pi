@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added a snippet picker in the composer (`{}` button): filterable, keyboard-navigable list of the snippets managed on the dashboard settings page; inserts at the cursor without sending.
 - Initial release: Preact web UI for pi sessions, speaking the pi RPC protocol over WebSocket. Served by `pi --web`, `/web` in the TUI, and `server serve --web` (per-instance under `/i/<id>/`); includes TUI-mirrored rendering (markdown, syntax highlighting, tool executions with edit/write diffs, themes from the TUI theme JSONs including custom themes), prompting with steering and abort, slash command autocomplete, extension UI dialogs (select/confirm/input/editor) with first-response-wins semantics across clients, inline compaction summaries, and a mobile layout (touch targets, safe areas, send button).
 - Added builtin slash commands in the web UI: `/compact`, `/new`, `/name`, `/model` (picker with fuzzy search, or `/model provider/id` directly), `/session` (stats card), `/export`, `/copy`, `/fork` (message picker, forked text lands in the editor), `/clone`, plus `!<cmd>` bash execution.
 - Added a review icon to the session header, left of the terminal icon, linking to the review page for the session's working location. Under `pi-server` it passes the instance id so the review page can link back.
@@ -28,6 +29,9 @@
 - Fixed the `tui`/terminal views going silent after a WebSocket reconnect: they now re-open with a fresh replay and show a "Reconnecting…" overlay while doing so, instead of only resuming future output.
 - Fixed the `tui`/terminal views keeping the theme they were opened with; they now update live when the theme is switched from the footer.
 - Fixed keystrokes typed immediately after opening the `tui`/terminal view being lost before the previously-focused editor unmounted; the view now focuses itself as soon as it opens, and shows a loading overlay until the first frame arrives.
+- Fixed `DialogHost` reusing a stale extension dialog's typed input/prefill: consecutive same-method dialogs (e.g. two `input` or `editor` requests in a row) now remount instead of reusing component state.
+- Fixed a rapid run/tab/output switch in the subagents panel being able to display a slower, now-superseded fetch response instead of content matching the currently selected run and view.
+- Fixed the subagents panel's Transcript tab staying empty for `workflow`-mode subagent runs by parsing the child's own session-file records (not just the flat pi-subagents transcript format) for displayable text/role. Runs recorded against an earlier session state (before a fork/`/new`/`/cd`/TUI reload) are now shown with a visible marker instead of silently disappearing.
 - Fixed terminal/TUI keystrokes typed while disconnected throwing an unhandled promise rejection; input sent while disconnected now fails through the same toast convention as the rest of the app.
 - Fixed the terminal/TUI resize RPC firing on every layout tick during a drag-resize; it is now debounced (~150ms).
 - Fixed the subagents panel showing a silently blank content pane for a run with no transcript or output file (its Transcript/Output tabs were already correctly disabled, but the pane below stayed empty either way): it now shows an explicit "No transcript/output available for this run" placeholder.

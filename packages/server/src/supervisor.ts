@@ -260,12 +260,16 @@ export class ServerSupervisor {
 			for (const subscriber of live.subscribers) {
 				subscriber(event);
 			}
-			// session_reloaded is a bridge-level push (rpc-bridge.ts), not part of the
-			// AgentSessionEvent union handleRpc's shouldRefreshSessionMetadata gates on,
-			// fired while a TUI is attached and writes to the session file (e.g. /cd or
-			// /new from inside the TUI). Refresh the instance record here too, or the
-			// dashboard/review link stays stale until the TUI is closed.
-			if ((event as { type?: string }).type === "session_reloaded") {
+			// Metadata changes that arrive as pushes rather than command responses
+			// (so handleRpc's shouldRefreshSessionMetadata never sees them):
+			// - session_reloaded: bridge-level push while a TUI is attached and writes
+			//   to the session file (e.g. /cd or /new from inside the TUI).
+			// - session_info_changed: the session was (re)named, notably by the
+			//   background auto-naming that completes well after the prompt response
+			//   that triggered it. Without this the dashboard kept showing the
+			//   first-message fallback until the next restart.
+			const eventType = (event as { type?: string }).type;
+			if (eventType === "session_reloaded" || eventType === "session_info_changed") {
 				void this.syncInstanceRecord(live);
 			}
 		});

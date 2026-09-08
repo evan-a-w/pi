@@ -700,6 +700,7 @@ body {
 }
 
 .editor-row {
+	position: relative;
 	display: flex;
 	gap: 8px;
 	align-items: flex-end;
@@ -739,6 +740,92 @@ body {
 
 .editor-button.abort {
 	color: var(--pi-error);
+}
+
+.editor-button.snippets {
+	color: var(--pi-muted);
+	font-size: 12px;
+	padding: 4px 8px;
+}
+
+.editor-button.snippets.active,
+.editor-button.snippets:hover {
+	color: var(--pi-accent);
+}
+
+/* Snippet picker: popover above the composer, same look as slash autocomplete. */
+.snippet-picker {
+	position: absolute;
+	bottom: 100%;
+	left: 0;
+	right: 0;
+	margin-bottom: 6px;
+	background: var(--pi-cardBg);
+	border: 1px solid var(--pi-borderMuted);
+	border-radius: 6px;
+	overflow: hidden;
+	z-index: 10;
+	display: flex;
+	flex-direction: column;
+}
+
+.snippet-filter {
+	background: transparent;
+	border: 0;
+	border-bottom: 1px solid var(--pi-borderMuted);
+	outline: none;
+	color: var(--pi-text);
+	font: inherit;
+	font-size: 13px;
+	padding: 8px 10px;
+}
+
+.snippet-list {
+	max-height: 240px;
+	overflow-y: auto;
+}
+
+.snippet-entry {
+	display: flex;
+	gap: 10px;
+	align-items: baseline;
+	width: 100%;
+	text-align: left;
+	background: transparent;
+	border: 0;
+	color: var(--pi-text);
+	font: inherit;
+	font-size: 13px;
+	padding: 8px 10px;
+	min-height: 36px;
+	cursor: pointer;
+}
+
+.snippet-entry.selected,
+.snippet-entry:hover {
+	background: var(--pi-selectedBg);
+}
+
+.snippet-name {
+	color: var(--pi-accent);
+	flex-shrink: 0;
+}
+
+.snippet-preview {
+	color: var(--pi-muted);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.snippet-empty {
+	color: var(--pi-muted);
+	font-size: 13px;
+	padding: 10px;
+}
+
+.snippet-empty a {
+	color: var(--pi-accent);
 }
 
 /* ============ Widgets ============ */
@@ -1480,6 +1567,17 @@ select.theme-toggle {
 	margin-top: 6px;
 	padding: 6px 8px;
 	white-space: pre-wrap;
+}
+
+.subagents-stale-note {
+	color: var(--pi-warning);
+	font-size: 12px;
+	margin-top: 6px;
+}
+
+.subagents-tab-stale {
+	color: var(--pi-warning);
+	font-size: 10px;
 }
 
 .subagents-view-tabs {

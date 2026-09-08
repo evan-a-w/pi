@@ -667,11 +667,12 @@ export async function refreshSubagents(): Promise<void> {
 	const previous = subagentRuns.value;
 	subagentRuns.value = runs;
 
-	// Keep the selection stable across refreshes: prefer the same key, then the
-	// first running run, then the first run.
+	// Keep the selection stable across refreshes. If the previously selected run is
+	// gone (or nothing was selected yet), fall back to the first running run, then
+	// the first run.
 	const selected = selectedRunKey.value;
 	if (!selected || !runs.some((run) => run.key === selected)) {
-		const next = runs.find((run) => run.key === selected) ?? runs.find((run) => run.status === "running") ?? runs[0];
+		const next = runs.find((run) => run.status === "running") ?? runs[0];
 		if (next && next.key !== selected) {
 			selectedRunKey.value = next.key;
 			void loadSelectedSubagentFile();
@@ -682,23 +683,38 @@ export async function refreshSubagents(): Promise<void> {
 	}
 }
 
+// Identifies the in-flight request that should be allowed to write subagentFile.
+// Rapid run/tab/output switching can let an older, slower fetch resolve after a
+// newer one; comparing against this object (set synchronously right before the
+// await) discards any response that is no longer the most recently requested one.
+let latestSubagentFileRequest: { key: string | undefined; view: SubagentView; path: string } | undefined;
+
+async function fetchAndSetSubagentFile(key: string | undefined, view: SubagentView, path: string): Promise<void> {
+	const target = { key, view, path };
+	latestSubagentFileRequest = target;
+	subagentLoading.value = true;
+	const data = await fetchSubagentJson<SubagentFileData>(`subagents/file?path=${encodeURIComponent(path)}`);
+	if (latestSubagentFileRequest !== target) return;
+	subagentFile.value = data;
+	subagentLoading.value = false;
+}
+
 async function loadSelectedSubagentFile(): Promise<void> {
 	const key = selectedRunKey.value;
 	const run = subagentRuns.value.find((candidate) => candidate.key === key);
 	if (!run) {
 		subagentFile.value = undefined;
+		latestSubagentFileRequest = undefined;
 		return;
 	}
 	const view = subagentView.value;
 	const path = view === "output" ? run.outputPath : view === "outputs" ? run.outputs?.[0]?.path : run.transcriptPath;
 	if (!path) {
 		subagentFile.value = undefined;
+		latestSubagentFileRequest = undefined;
 		return;
 	}
-	subagentLoading.value = true;
-	const data = await fetchSubagentJson<SubagentFileData>(`subagents/file?path=${encodeURIComponent(path)}`);
-	subagentFile.value = data;
-	subagentLoading.value = false;
+	await fetchAndSetSubagentFile(key, view, path);
 }
 
 export async function selectSubagentRun(key: string): Promise<void> {
@@ -720,10 +736,7 @@ export async function setSubagentView(view: SubagentView): Promise<void> {
 
 export async function selectSubagentOutput(path: string): Promise<void> {
 	subagentFile.value = undefined;
-	subagentLoading.value = true;
-	const data = await fetchSubagentJson<SubagentFileData>(`subagents/file?path=${encodeURIComponent(path)}`);
-	subagentFile.value = data;
-	subagentLoading.value = false;
+	await fetchAndSetSubagentFile(selectedRunKey.value, "outputs", path);
 }
 
 let subagentPollTimer: ReturnType<typeof setInterval> | undefined;
