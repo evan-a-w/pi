@@ -451,6 +451,39 @@ export class ServerSupervisor {
 		upsertInstance({ ...record, lastSeenAt: new Date().toISOString() });
 	}
 
+	/**
+	 * Stop unpinned sessions nobody has touched for `idleMs`, freeing their
+	 * process (~225MB RSS each) - on small hosts a pile of forgotten live sessions
+	 * is what drives systemd-oomd to kill the whole server. Skips pinned sessions
+	 * (always-up by contract), sessions with an attached web client, sessions not
+	 * fully online, and sessions the agent is still working in. Stopped sessions
+	 * stay resumable from the dashboard's inactive list with nothing lost.
+	 */
+	async reapIdleInstances(idleMs: number): Promise<number> {
+		const cutoff = Date.now() - idleMs;
+		let reaped = 0;
+		for (const live of [...this.liveInstances.values()]) {
+			const { record } = live;
+			if (record.pinned || record.status !== "online") continue;
+			if (live.subscribers.size > 0) continue;
+			const lastSeen = Date.parse(record.lastSeenAt ?? record.createdAt);
+			if (Number.isNaN(lastSeen) || lastSeen > cutoff) continue;
+			const channel = this.getRpcChannel(live);
+			if (!channel) continue;
+			try {
+				const state = await channel.send({ type: "get_state" });
+				if (isGetStateSuccess(state) && (state.data as { isStreaming?: boolean }).isStreaming) continue;
+			} catch {
+				// Unresponsive child: reaping it is the right call.
+			}
+			if (this.liveInstances.get(record.id) !== live) continue;
+			console.log(`reaping idle session ${record.id} (${record.sessionFile ?? record.cwd})`);
+			await this.stopInstance(record.id);
+			reaped++;
+		}
+		return reaped;
+	}
+
 	listLiveInstances(): InstanceRecord[] {
 		return [...this.liveInstances.values()].map((live) => cloneInstance(live.record));
 	}

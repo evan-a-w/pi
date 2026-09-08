@@ -1,5 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -74,18 +75,22 @@ export class RpcProcessInstance {
 				args: ["--mode", "rpc"],
 			};
 		}
+		const rpcEntry = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent/rpc-entry"));
+		// Bound each session's V8 heap: on a small host, unbounded children are what
+		// tips systemd-oomd into killing the whole unit (every session at once).
+		const heapFlag = `--max-old-space-size=${process.env.PI_RPC_MAX_OLD_SPACE_MB ?? "512"}`;
+		// Built dist: run it directly. The tsx wrapper below is dev-only, and each
+		// instance of it costs ~60MB RSS plus a second process per session.
+		if (rpcEntry.endsWith(".js") && existsSync(rpcEntry)) {
+			return { command: process.execPath, args: [heapFlag, rpcEntry] };
+		}
 		// Dev mode: run via tsx so TypeScript source works without a build step.
 		const srcDir = dirname(fileURLToPath(import.meta.url));
 		const repoRoot = dirname(dirname(dirname(srcDir)));
 		const tsxBin = join(repoRoot, "node_modules", ".bin", "tsx");
 		return {
 			command: process.execPath,
-			args: [
-				tsxBin,
-				"--tsconfig",
-				join(repoRoot, "tsconfig.json"),
-				fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent/rpc-entry")),
-			],
+			args: [heapFlag, tsxBin, "--tsconfig", join(repoRoot, "tsconfig.json"), rpcEntry],
 		};
 	}
 

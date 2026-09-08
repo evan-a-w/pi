@@ -32,6 +32,17 @@ export async function serve(options: ServeOptions = {}): Promise<void> {
 	try {
 		await supervisor.recoverAfterRestart();
 		await supervisor.spawnPinnedInstances();
+		// Idle reaper: unpinned sessions untouched for PI_SERVER_IDLE_MINUTES (default
+		// 120; 0 disables) are stopped to free memory. See reapIdleInstances.
+		const idleMinutes = Number(process.env.PI_SERVER_IDLE_MINUTES ?? "120");
+		if (Number.isFinite(idleMinutes) && idleMinutes > 0) {
+			const reaper = setInterval(() => {
+				void supervisor.reapIdleInstances(idleMinutes * 60_000).catch((error: unknown) => {
+					console.error(`idle reaper failed: ${error instanceof Error ? error.message : String(error)}`);
+				});
+			}, 60_000);
+			reaper.unref();
+		}
 		if (isRadiusEnabled()) {
 			const machine = await radiusPresence.start();
 			console.log(`radius integration enabled: ${socketPath} -> ${getRadiusServerBaseUrl()}`);
