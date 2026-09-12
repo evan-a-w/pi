@@ -9,6 +9,8 @@
  * - WS  /i/<id>/ws            RPC protocol stream for that instance
  * - GET /i/<id>/subagents     subagent runs for that instance (pi-subagents artifacts)
  * - GET /i/<id>/subagents/file?path=<rel>  a subagent transcript/output artifact
+ * - GET /i/<id>/files?path=<rel>           read-only directory listing under that instance's cwd
+ * - GET /i/<id>/files/content?path=<rel>   read-only file content (text files ≤ 512KB)
  * - GET /review               cranium code review UI
  * - GET /themes, /theme/*     TUI theme files, shared by all instances
  * - GET  /api/dashboard-sessions       merged live/stopped/past session list (dashboard), tagged by namespace
@@ -541,6 +543,156 @@ function resolveSubagentArtifact(cwd: string, sessionFile: string | undefined, r
 	return resolveWithinBase(path.join(cwd, ".pi-subagents"), relative);
 }
 
+// ============================================================================
+// Read-only file explorer (GET /i/<id>/files, GET /i/<id>/files/content)
+// Scoped strictly to the instance's cwd; every path is resolved and prefix-
+// checked against it (see resolveWithinExplorerRoot) before any fs access.
+// ============================================================================
+
+const EXPLORER_MAX_ENTRIES = 500;
+const EXPLORER_MAX_FILE_BYTES = 512 * 1024;
+const EXPLORER_SKIPPED_NAMES = new Set(["node_modules", ".git"]);
+
+const EXPLORER_TEXT_EXTENSIONS = new Set([
+	".js",
+	".jsx",
+	".ts",
+	".tsx",
+	".mjs",
+	".cjs",
+	".json",
+	".jsonc",
+	".md",
+	".mdx",
+	".txt",
+	".css",
+	".scss",
+	".less",
+	".html",
+	".htm",
+	".xml",
+	".yml",
+	".yaml",
+	".toml",
+	".ini",
+	".cfg",
+	".conf",
+	".sh",
+	".bash",
+	".zsh",
+	".fish",
+	".py",
+	".rb",
+	".go",
+	".rs",
+	".java",
+	".kt",
+	".c",
+	".cc",
+	".cpp",
+	".h",
+	".hpp",
+	".cs",
+	".php",
+	".sql",
+	".graphql",
+	".vue",
+	".svelte",
+	".env",
+	".csv",
+	".log",
+	".lock",
+	".gradle",
+	".properties",
+]);
+
+const EXPLORER_TEXT_BASENAMES = new Set([
+	"dockerfile",
+	"makefile",
+	"license",
+	"readme",
+	"changelog",
+	"authors",
+	"contributing",
+	".gitignore",
+	".gitattributes",
+	".npmrc",
+	".env",
+	".editorconfig",
+]);
+
+function isExplorerTextFile(filePath: string): boolean {
+	if (EXPLORER_TEXT_EXTENSIONS.has(path.extname(filePath).toLowerCase())) return true;
+	return EXPLORER_TEXT_BASENAMES.has(path.basename(filePath).toLowerCase());
+}
+
+/** Resolve a relative explorer path against an instance's cwd, rejecting any escape (../, symlink-free path.resolve check). */
+function resolveWithinExplorerRoot(cwd: string, relative: string): string | undefined {
+	const base = path.resolve(cwd);
+	const resolved = path.resolve(base, relative || ".");
+	if (resolved !== base && !resolved.startsWith(base + path.sep)) return undefined;
+	return resolved;
+}
+
+interface ExplorerEntry {
+	name: string;
+	type: "dir" | "file";
+	size?: number;
+}
+
+type ExplorerResult<T> = ({ ok: true } & T) | { ok: false; error: string };
+
+function listExplorerDir(cwd: string, relative: string): ExplorerResult<{ entries: ExplorerEntry[] }> {
+	const dirPath = resolveWithinExplorerRoot(cwd, relative);
+	if (!dirPath) return { ok: false, error: "Path escapes the working directory" };
+	let names: string[];
+	try {
+		if (!fs.statSync(dirPath).isDirectory()) return { ok: false, error: "Not a directory" };
+		names = fs.readdirSync(dirPath).sort((a, b) => a.localeCompare(b));
+	} catch (error) {
+		return { ok: false, error: error instanceof Error ? error.message : String(error) };
+	}
+	const dirs: ExplorerEntry[] = [];
+	const files: ExplorerEntry[] = [];
+	for (const name of names) {
+		if (EXPLORER_SKIPPED_NAMES.has(name)) continue;
+		if (dirs.length + files.length >= EXPLORER_MAX_ENTRIES) break;
+		let entryStat: fs.Stats;
+		try {
+			entryStat = fs.statSync(path.join(dirPath, name));
+		} catch {
+			continue;
+		}
+		if (entryStat.isDirectory()) {
+			dirs.push({ name, type: "dir" });
+		} else if (entryStat.isFile()) {
+			files.push({ name, type: "file", size: entryStat.size });
+		}
+	}
+	return { ok: true, entries: [...dirs, ...files] };
+}
+
+function readExplorerFile(cwd: string, relative: string): ExplorerResult<{ content: string }> {
+	const filePath = resolveWithinExplorerRoot(cwd, relative);
+	if (!filePath) return { ok: false, error: "Path escapes the working directory" };
+	let stat: fs.Stats;
+	try {
+		stat = fs.statSync(filePath);
+	} catch (error) {
+		return { ok: false, error: error instanceof Error ? error.message : String(error) };
+	}
+	if (!stat.isFile()) return { ok: false, error: "Not a file" };
+	if (stat.size > EXPLORER_MAX_FILE_BYTES) {
+		return { ok: false, error: `File too large (${stat.size} bytes, limit ${EXPLORER_MAX_FILE_BYTES})` };
+	}
+	if (!isExplorerTextFile(filePath)) return { ok: false, error: "Not a text file" };
+	try {
+		return { ok: true, content: fs.readFileSync(filePath, "utf-8") };
+	} catch (error) {
+		return { ok: false, error: error instanceof Error ? error.message : String(error) };
+	}
+}
+
 function escapeHtml(text: string): string {
 	return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
@@ -563,6 +715,9 @@ interface DashboardSessionSummary {
 	name: string;
 	status: DashboardSessionStatus;
 	pinned: boolean;
+	// Sort key for the pinned group (ascending, i.e. first-pinned-first, never
+	// reshuffled by activity). undefined for unpinned sessions.
+	pinnedAt?: string;
 	archived: boolean;
 	// Account namespace this session belongs to; undefined means the implicit
 	// "default" namespace. See namespaces.ts.
@@ -590,6 +745,9 @@ async function listDashboardSessions(): Promise<DashboardSessionSummary[]> {
 		name: resolveInstanceDisplayName(instance),
 		status: instance.status,
 		pinned: Boolean(instance.pinned),
+		// Records pinned before pinnedAt existed fall back to createdAt so they still
+		// get a stable (if arbitrary) position instead of sorting as "most recent".
+		pinnedAt: instance.pinned ? (instance.pinnedAt ?? instance.createdAt) : undefined,
 		archived: Boolean(instance.archived),
 		namespace: instance.namespace,
 		modified: instance.lastSeenAt ?? instance.createdAt,
@@ -627,12 +785,16 @@ async function listDashboardSessions(): Promise<DashboardSessionSummary[]> {
 		}
 	}
 
-	// Pinned sessions always sort first (as a group ordered by last-accessed, same
-	// as everyone else); status otherwise plays no role in ordering.
+	// Pinned sessions always sort first, as a group in a FIXED order by pinnedAt
+	// ascending (first-pinned-first) - never by last-accessed, so using a pinned
+	// session doesn't reshuffle the group. Everyone else sorts by last-accessed.
 	const merged = [...instanceSummaries, ...pastSummaries];
 	merged.sort((left, right) => {
 		const rank = (left.pinned ? 0 : 1) - (right.pinned ? 0 : 1);
 		if (rank !== 0) return rank;
+		if (left.pinned && right.pinned) {
+			return (left.pinnedAt ?? "").localeCompare(right.pinnedAt ?? "");
+		}
 		return (right.modified ?? "").localeCompare(left.modified ?? "");
 	});
 	return merged;
@@ -777,13 +939,229 @@ function dirSuggestScript(inputId: string, listId: string): string {
 	})();`;
 }
 
+/**
+ * Shared design tokens + base element styles for the server-rendered dashboard
+ * pages (index, settings). Kept as one constant so the two pages never drift
+ * into inconsistent spacing/color scales; page-specific rules are appended
+ * after this in each page's own <style> block.
+ */
+const DASHBOARD_BASE_CSS = `
+		:root,
+		:root[data-theme="light"] {
+			color-scheme: light;
+			--ds-space-1: 4px;
+			--ds-space-2: 8px;
+			--ds-space-3: 12px;
+			--ds-space-4: 16px;
+			--ds-space-5: 20px;
+			--ds-space-6: 28px;
+			--ds-radius-sm: 4px;
+			--ds-radius-md: 8px;
+			--ds-radius-lg: 12px;
+			--ds-font-xs: 11px;
+			--ds-font-sm: 12px;
+			--ds-font-base: 13px;
+			--ds-font-md: 14px;
+			--ds-font-lg: 16px;
+			--ds-bg: #ffffff;
+			--ds-surface: #f5f5f5;
+			--ds-surface-2: #ffffff;
+			--ds-surface-hover: #eeeeee;
+			--ds-surface-selected: #e8e8e8;
+			--ds-border: #e0e0e0;
+			--ds-text: #1a1a1a;
+			--ds-text-muted: #515c6b;
+			--ds-text-dim: #5e6673;
+			--ds-accent: #245bce;
+			--ds-accent-hover: #1d4ed8;
+			--ds-accent-fg: #ffffff;
+			--ds-danger: #dc2626;
+			--ds-danger-bg: #fef2f2;
+			--ds-success: #16a34a;
+			--ds-warning: #b45309;
+			--ds-tap-min: 44px;
+		}
+		:root[data-theme="dark"] {
+			color-scheme: dark;
+			--ds-bg: #1a1a1a;
+			--ds-surface: #242424;
+			--ds-surface-2: #1a1a1a;
+			--ds-surface-hover: #2e2e2e;
+			--ds-surface-selected: #383838;
+			--ds-border: #454545;
+			--ds-text: #e8e8e8;
+			--ds-text-muted: #b7b7b7;
+			--ds-text-dim: #a4a4a4;
+			--ds-accent: #a4c2f4;
+			--ds-accent-hover: #c3d8fa;
+			--ds-accent-fg: #182234;
+			--ds-danger: #f87171;
+			--ds-danger-bg: #2a1a1a;
+			--ds-success: #4ade80;
+			--ds-warning: #facc15;
+		}
+		*, *::before, *::after { box-sizing: border-box; }
+		html { -webkit-text-size-adjust: 100%; background: var(--ds-bg); }
+		body {
+			font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+			background: var(--ds-bg);
+			color: var(--ds-text);
+			margin: 0;
+			line-height: 1.5;
+			font-size: var(--ds-font-md);
+			-webkit-font-smoothing: antialiased;
+		}
+		pre, code { font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+		h1 { font-size: var(--ds-font-lg); margin: 0; font-weight: 700; }
+		h2 { font-size: var(--ds-font-lg); margin: 0; font-weight: 600; }
+		h3 { font-size: var(--ds-font-base); margin: 0 0 var(--ds-space-2); color: var(--ds-text-muted); font-weight: 600; }
+		a { color: var(--ds-accent); }
+		.meta { color: var(--ds-text-dim); font-size: var(--ds-font-sm); margin-left: var(--ds-space-2); }
+		.meta.error { color: var(--ds-danger); }
+		ul { list-style: none; padding: 0; margin: 0; }
+		input[type="text"], select, textarea {
+			font-family: inherit;
+			font-size: var(--ds-font-md);
+			background: var(--ds-surface-2);
+			color: var(--ds-text);
+			border: 1px solid var(--ds-border);
+			padding: 8px 10px;
+			border-radius: var(--ds-radius-sm);
+			transition: border-color 0.12s ease, box-shadow 0.12s ease;
+		}
+		input[type="text"]::placeholder, textarea::placeholder { color: var(--ds-text-dim); }
+		input[type="text"]:focus, select:focus, textarea:focus, input[type="checkbox"]:focus-visible {
+			outline: none;
+			border-color: var(--ds-accent);
+			box-shadow: 0 0 0 2px color-mix(in srgb, var(--ds-accent) 20%, transparent);
+		}
+		:focus-visible { outline: 2px solid var(--ds-accent); outline-offset: 1px; }
+		textarea { resize: vertical; }
+		.page-top {
+			display: flex;
+			align-items: center;
+			gap: var(--ds-space-2);
+			min-height: 44px;
+			padding: var(--ds-space-2) var(--ds-space-4);
+			padding-top: calc(var(--ds-space-2) + env(safe-area-inset-top));
+			border-bottom: 1px solid var(--ds-border);
+		}
+		.page-top h1 { line-height: 1; }
+		.page-nav { display: flex; align-items: center; gap: var(--ds-space-1); margin-left: auto; }
+		.page-nav-link {
+			min-height: 28px;
+			display: inline-flex;
+			align-items: center;
+			padding: 4px 8px;
+			border-radius: var(--ds-radius-sm);
+			color: var(--ds-text-muted);
+			font-size: var(--ds-font-sm);
+			text-decoration: none;
+		}
+		.page-nav-link:hover { color: var(--ds-text); background: var(--ds-surface-hover); }
+		.page-nav-link.active { color: var(--ds-text); font-weight: 600; }
+		.theme-toggle {
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			width: 28px;
+			height: 28px;
+			padding: 0;
+			background: none;
+			border: 0;
+			border-radius: var(--ds-radius-sm);
+			color: var(--ds-text-muted);
+			cursor: pointer;
+		}
+		.theme-toggle:hover { background: var(--ds-surface-hover); color: var(--ds-text); }
+		:root[data-theme="light"] .theme-icon-dark,
+		:root[data-theme="dark"] .theme-icon-light { display: none; }
+		.page-content { width: 100%; margin: 0 auto; padding: var(--ds-space-6) var(--ds-space-5); }
+		.primary-btn {
+			font-family: inherit;
+			font-size: var(--ds-font-base);
+			font-weight: 600;
+			cursor: pointer;
+			background: var(--ds-accent);
+			color: var(--ds-accent-fg);
+			border: 1px solid var(--ds-accent);
+			padding: 8px 14px;
+			border-radius: var(--ds-radius-sm);
+			transition: background-color 0.12s ease, border-color 0.12s ease;
+		}
+		.primary-btn:hover { background: var(--ds-accent-hover); border-color: var(--ds-accent-hover); }
+		.secondary-btn {
+			font-family: inherit;
+			font-size: var(--ds-font-base);
+			background: transparent;
+			color: var(--ds-text-muted);
+			border: 1px solid var(--ds-border);
+			padding: 6px 12px;
+			border-radius: var(--ds-radius-sm);
+			cursor: pointer;
+			min-height: 34px;
+		}
+		.secondary-btn:hover { background: var(--ds-surface-hover); color: var(--ds-text); }
+		.secondary-btn.danger { color: var(--ds-danger); }
+		button:disabled { opacity: 0.4; cursor: default; }
+		@media (max-width: 640px) {
+			.page-content { padding: var(--ds-space-5) var(--ds-space-4); }
+			.page-top { padding-left: var(--ds-space-3); padding-right: var(--ds-space-3); }
+		}
+		@media (pointer: coarse) {
+			.page-nav-link, .theme-toggle { min-height: var(--ds-tap-min); }
+			.theme-toggle { width: var(--ds-tap-min); }
+			input[type="text"], select, textarea { font-size: 16px; }
+		}
+	`;
+
+/**
+ * Sets data-theme on <html> from the SAME localStorage key the SPA's theme
+ * toggle persists to (THEME_STORAGE_KEY in packages/web/src/theme.ts:
+ * "pi-web-theme"), so the dashboard/settings pages open in whichever
+ * light/dark choice the user last made in the app. Inline and synchronous
+ * (not a deferred module) so it runs before first paint and there is no
+ * flash of the wrong theme. Like the SPA, light is the default when there is
+ * no stored choice; toggling writes "light" or "dark" back to the same key.
+ */
+const CLIENT_THEME_BOOTSTRAP_SCRIPT = `<script>(function(){
+	function setTheme(name, persist) {
+		var theme = /light/i.test(name) ? "light" : "dark";
+		document.documentElement.dataset.theme = theme;
+		var button = document.querySelector(".theme-toggle");
+		if (button) button.title = theme === "light" ? "Switch to dark theme" : "Switch to light theme";
+		if (persist) {
+			try { localStorage.setItem("pi-web-theme", theme); } catch (_error) {}
+		}
+	}
+	try { setTheme(localStorage.getItem("pi-web-theme") || "light", false); } catch (_error) { setTheme("light", false); }
+	window.toggleDashboardTheme = function() {
+		try { setTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light", true); } catch (_error) {}
+	};
+	window.addEventListener("DOMContentLoaded", function() {
+		setTheme(document.documentElement.dataset.theme || "light", false);
+	});
+})();</script>`;
+
+const DASHBOARD_THEME_TOGGLE = `<button type="button" class="theme-toggle" title="Switch theme" onclick="toggleDashboardTheme()">
+	<svg class="theme-icon-light" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+		<title>Dark theme</title>
+		<path d="M13.5 9.5A5.5 5.5 0 016.5 2.5 5.5 5.5 0 1013.5 9.5z" stroke="currentColor" stroke-width="1.2" fill="none" />
+	</svg>
+	<svg class="theme-icon-dark" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+		<title>Light theme</title>
+		<circle cx="8" cy="8" r="3.2" stroke="currentColor" stroke-width="1.2" />
+		<path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.4 1.4M11.6 11.6L13 13M13 3l-1.4 1.4M4.4 11.6L3 13" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
+	</svg>
+</button>`;
+
 function renderIndexPage(): string {
 	return `<!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
 	<meta charset="UTF-8" />
 	<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-	<meta name="theme-color" content="#18181e" />
+	<meta name="theme-color" content="#ffffff" />
 	<meta name="mobile-web-app-capable" content="yes" />
 	<meta name="apple-mobile-web-app-capable" content="yes" />
 	<meta name="apple-mobile-web-app-title" content="pi" />
@@ -792,123 +1170,125 @@ function renderIndexPage(): string {
 	<link rel="icon" href="/icons/pi.svg" type="image/svg+xml" />
 	<link rel="apple-touch-icon" href="/icons/pi-180.png" />
 	<title>pi server</title>
+	${CLIENT_THEME_BOOTSTRAP_SCRIPT}
 	<style>
-		*, *::before, *::after { box-sizing: border-box; }
-		body { font-family: ui-monospace, monospace; background: #0d0d0d; color: #e6e6e6; margin: 0 auto; padding: 24px 48px; max-width: 1500px; }
-		h1 { font-size: 1.2em; margin-bottom: 1em; }
-		h2 { font-size: 1em; }
-		a { color: #8abeb7; }
-		.nav { margin-bottom: 1.5em; font-size: 0.95em; }
-		.nav a { margin-right: 12px; }
-		ul { list-style: none; padding: 0; }
-		li { margin: 0.6em 0; word-break: break-all; }
-		.meta { color: #666; font-size: 0.85em; margin-left: 0.5em; }
-		.spawn-form { margin-top: 2em; padding: 0.9em 1em 1em; border: 1px solid #2a2a2a; border-radius: 6px; background: #121212; }
-		.spawn-form h2 { font-size: 0.95em; margin: 0 0 0.7em; }
-		.spawn-form label { display: block; margin: 0; font-size: 0.8em; color: #888; }
-		.spawn-form input[type="text"], .spawn-form select, .spawn-form button { font-family: inherit; font-size: 13px; background: #1a1a1a; color: #e6e6e6; border: 1px solid #3a3a3a; padding: 7px 9px; border-radius: 4px; }
-		.spawn-form input[type="text"], .spawn-form select { width: 100%; margin-top: 4px; }
-		.spawn-form input[type="text"]::placeholder { color: #555; }
-		.spawn-form button { cursor: pointer; background: #2a4a3f; border-color: #3a6a5f; padding: 7px 16px; }
-		.spawn-actions { display: flex; align-items: center; gap: 12px; margin-top: 0.7em; }
-		#spawn-namespace-wrap { margin-top: 0.7em; }
-		.ns-bar { display: flex; align-items: center; gap: 8px; margin: -0.5em 0 1.2em; font-size: 0.85em; color: #999; }
-		.ns-bar select { font-family: inherit; font-size: 0.85em; background: #1a1a1a; color: #e6e6e6; border: 1px solid #3a3a3a; padding: 4px 8px; border-radius: 4px; }
-		.ns-bar button { font-family: inherit; font-size: 0.85em; background: #1a1a1a; color: #e6e6e6; border: 1px solid #3a3a3a; padding: 4px 8px; border-radius: 4px; cursor: pointer; }
-		.ns-bar button:disabled { opacity: 0.4; cursor: default; }
-		.ns-bar input { font-family: inherit; font-size: 0.85em; background: #1a1a1a; color: #e6e6e6; border: 1px solid #3a3a3a; padding: 4px 8px; border-radius: 4px; width: 160px; }
-		#ns-create-form { display: inline-flex; align-items: center; gap: 6px; }
-		.ns-tag { color: #b294bb; border-color: #3a2a4a; }
-		.spawn-form button:hover { background: #3a6a5f; }
-		.spawn-result { margin-top: 0.5em; font-size: 0.8em; }
-		.spawn-result.error { color: #e06060; }
-		.spawn-result.success { color: #60c060; }
-		.session-row { display: flex; justify-content: space-between; align-items: center; padding: 0.5em 0; gap: 8px; flex-wrap: wrap; }
-		.session-row + .session-row { border-top: 1px solid #1a1a1a; }
-		.session-main { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
-		.session-name { font-size: 0.95em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-		.session-name-input { font-family: inherit; font-size: 0.9em; background: #1a1a1a; color: #e6e6e6; border: 1px solid #444; border-radius: 3px; padding: 3px 6px; min-width: 0; }
-		.session-actions { display: flex; gap: 6px; flex-wrap: wrap; flex-shrink: 0; }
-		.row-btn { font-family: inherit; font-size: 0.85em; background: #1a1a1a; color: #8abeb7; border: 1px solid #333; padding: 4px 10px; border-radius: 3px; cursor: pointer; white-space: nowrap; flex-shrink: 0; min-height: 34px; text-decoration: none; display: inline-flex; align-items: center; }
-		.row-btn:hover { background: #2a2a2a; }
-		.row-btn.danger { color: #e06060; }
-		.row-btn.active { color: #d7a55b; border-color: #5a4a2a; }
-		.badge { font-size: 0.75em; padding: 1px 6px; border-radius: 3px; border: 1px solid #333; color: #999; flex-shrink: 0; }
-		.badge-online, .badge-starting { color: #60c060; border-color: #2a4a2a; }
-		.badge-error { color: #e06060; border-color: #4a2a2a; }
-		.badge-stopping { color: #d7a55b; border-color: #5a4a2a; }
-		.badge-stopped, .badge-past { color: #999; }
-		.pin-icon { color: #d7a55b; flex-shrink: 0; display: inline-flex; align-items: center; }
+${DASHBOARD_BASE_CSS}
+		.page-content { max-width: 1240px; }
+		.meta { margin-left: 0; }
+		.ns-bar {
+			display: flex;
+			flex-wrap: wrap;
+			align-items: center;
+			gap: var(--ds-space-2);
+			min-height: 32px;
+			margin: 0 0 var(--ds-space-5);
+			color: var(--ds-text-dim);
+			font-size: var(--ds-font-sm);
+		}
+		.ns-bar label { color: var(--ds-text-dim); }
+		.ns-bar select, .ns-bar input[type="text"] { font-size: var(--ds-font-sm); padding: 5px 8px; }
+		.ns-bar input[type="text"] { width: 160px; }
+		#ns-create-form { display: inline-flex; align-items: center; gap: var(--ds-space-2); }
+		.ns-tag { color: var(--ds-text-dim); }
+		.dash-columns { display: flex; gap: var(--ds-space-6); align-items: flex-start; }
+		.dash-main { flex: 1 1 auto; min-width: 0; }
+		.dash-side { flex: 0 0 340px; }
+		.sessions-header { display: flex; align-items: center; min-height: 36px; gap: var(--ds-space-3); }
+		.sessions-header h2 { font-size: var(--ds-font-md); }
+		.header-right { display: flex; align-items: center; gap: var(--ds-space-2); margin-left: auto; font-size: var(--ds-font-sm); flex-wrap: wrap; }
+		.header-right .row-btn { min-height: 30px; padding: 5px 10px; }
+		.spawn-form { padding-left: var(--ds-space-5); border-left: 1px solid var(--ds-border); }
+		.spawn-form h2 { font-size: var(--ds-font-md); margin: 0 0 var(--ds-space-3); }
+		.spawn-form label { display: block; margin: var(--ds-space-3) 0 0; font-size: var(--ds-font-sm); color: var(--ds-text-muted); }
+		.spawn-form label:first-of-type { margin-top: 0; }
+		.spawn-form input[type="text"], .spawn-form select { width: 100%; margin-top: var(--ds-space-1); }
+		.spawn-form button[type="submit"] { width: 100%; padding: 9px 16px; font-size: var(--ds-font-md); }
+		.spawn-actions { display: flex; align-items: center; gap: var(--ds-space-3); margin-top: var(--ds-space-4); flex-wrap: wrap; }
+		.spawn-actions button { width: auto; flex: 1 1 auto; }
+		#spawn-namespace-wrap { margin-top: var(--ds-space-3); }
+		.spawn-result { margin-top: var(--ds-space-3); font-size: var(--ds-font-sm); min-height: 1.2em; }
+		.spawn-result.error { color: var(--ds-danger); }
+		.spawn-result.success { color: var(--ds-success); }
+		.spawn-check { display: flex !important; align-items: center; gap: var(--ds-space-2); margin: 0 !important; font-size: var(--ds-font-sm) !important; color: var(--ds-text-muted) !important; cursor: pointer; }
+		.spawn-check input { appearance: none; -webkit-appearance: none; width: 16px; height: 16px; margin: 0; border: 1px solid var(--ds-border); border-radius: 3px; background: var(--ds-surface-2); cursor: pointer; position: relative; flex-shrink: 0; }
+		.spawn-check input:hover { border-color: var(--ds-accent); }
+		.spawn-check input:checked { background: var(--ds-accent); border-color: var(--ds-accent); }
+		.spawn-check input:checked::after { content: ""; position: absolute; left: 5px; top: 2px; width: 4px; height: 8px; border: solid var(--ds-accent-fg); border-width: 0 2px 2px 0; transform: rotate(45deg); }
+		.spawn-check:hover { color: var(--ds-text) !important; }
+		.dir-suggest { position: relative; }
+		.suggest-list { position: absolute; left: 0; right: 0; z-index: 5; background: var(--ds-surface-2); border: 1px solid var(--ds-border); border-top: none; border-radius: 0 0 var(--ds-radius-sm) var(--ds-radius-sm); max-height: 200px; overflow-y: auto; box-shadow: 0 8px 20px rgba(0,0,0,0.12); }
+		.suggest-list div { padding: 8px 10px; font-size: var(--ds-font-sm); cursor: pointer; }
+		.suggest-list div:hover { background: var(--ds-surface-hover); }
+		.session-list { min-height: 2.5em; border-top: 1px solid var(--ds-border); }
+		.session-list > .meta:only-child { display: block; padding: var(--ds-space-5) var(--ds-space-1); text-align: center; margin: 0; border-bottom: 1px solid var(--ds-border); }
+		.session-row { display: flex; justify-content: space-between; align-items: center; min-height: 52px; padding: 9px var(--ds-space-1); gap: var(--ds-space-3); border-bottom: 1px solid var(--ds-border); }
+		.session-row:hover { background: var(--ds-surface); }
+		.session-main { display: flex; align-items: center; gap: var(--ds-space-2); min-width: 0; flex: 1; }
+		.session-name { font-size: var(--ds-font-md); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; min-width: 0; max-width: 260px; }
+		.session-main .meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 120px; min-width: 0; }
+		.session-name-input { font-family: inherit; font-size: var(--ds-font-md); background: var(--ds-surface-2); color: var(--ds-text); border: 1px solid var(--ds-accent); border-radius: 3px; padding: 3px 6px; min-width: 0; }
+		.session-actions { display: flex; gap: var(--ds-space-2); flex-wrap: wrap; flex-shrink: 0; }
+		.badge { font-size: var(--ds-font-xs); color: var(--ds-text-dim); flex-shrink: 0; }
+		.badge-online, .badge-starting { color: var(--ds-success); }
+		.badge-error { color: var(--ds-danger); }
+		.badge-stopping { color: var(--ds-warning); }
+		.badge-stopped, .badge-past { color: var(--ds-text-dim); }
+		.pin-icon { color: var(--ds-warning); flex-shrink: 0; display: inline-flex; align-items: center; }
 		.kebab-wrap { position: relative; flex-shrink: 0; }
-		.kebab-btn { padding: 4px 8px; font-size: 1.1em; line-height: 1; }
-		.kebab-menu { position: absolute; right: 0; top: calc(100% + 4px); background: #1a1a1a; border: 1px solid #444; border-radius: 4px; z-index: 60; display: flex; flex-direction: column; min-width: 130px; overflow: hidden; }
-		/* display:flex above would otherwise override the UA's [hidden] { display:none }, leaving every menu visible. */
+		.kebab-btn { padding: 6px 10px; font-size: 1.1em; line-height: 1; }
+		.kebab-menu { position: absolute; right: 0; top: calc(100% + 4px); background: var(--ds-surface-2); border: 1px solid var(--ds-border); border-radius: var(--ds-radius-md); z-index: 60; display: flex; flex-direction: column; min-width: 150px; overflow: hidden; box-shadow: 0 8px 20px rgba(0,0,0,0.2); }
 		.kebab-menu[hidden] { display: none; }
-		.section-label { color: #999; font-size: 0.9em; margin: 1em 0 0.3em; }
-		.kebab-menu button { all: unset; box-sizing: border-box; cursor: pointer; padding: 10px 12px; font-size: 0.85em; font-family: inherit; color: #e6e6e6; white-space: nowrap; min-height: 38px; display: flex; align-items: center; }
-		.kebab-menu button:hover, .kebab-menu button:focus { background: #2a2a2a; }
-		.kebab-menu button.danger { color: #e06060; }
-		.kebab-menu-label { padding: 8px 12px 2px; font-size: 0.75em; color: #777; }
-		.rename-input { font-family: inherit; font-size: inherit; background: #1a1a1a; color: #e6e6e6; border: 1px solid #3a6a5f; padding: 2px 6px; border-radius: 3px; min-width: 200px; }
-		.session-list { min-height: 1.5em; }
-		.archived-section { margin-top: 1em; }
-		.archived-section summary { cursor: pointer; color: #999; font-size: 0.9em; padding: 0.4em 0; }
-		/* Space is always reserved (visibility, not display) so entering select mode never
-		   shifts row content; only visibility toggles. */
-		.row-select { margin-right: 4px; flex-shrink: 0; width: 18px; height: 18px; visibility: hidden; }
-		/* Selection is scoped: the main (active/pinned) list, the inactive list and
-		   the archived list each have their own select mode and selection. */
+		.section-label { color: var(--ds-text-muted); font-size: var(--ds-font-md); margin: var(--ds-space-4) 0 var(--ds-space-1); }
+		.kebab-menu button { all: unset; box-sizing: border-box; cursor: pointer; padding: 11px 14px; font-size: var(--ds-font-base); font-family: inherit; color: var(--ds-text); white-space: nowrap; min-height: var(--ds-tap-min); display: flex; align-items: center; }
+		.kebab-menu button:hover, .kebab-menu button:focus { background: var(--ds-surface-hover); }
+		.kebab-menu button.danger { color: var(--ds-danger); }
+		.kebab-menu-label { padding: 8px 14px 2px; font-size: var(--ds-font-xs); color: var(--ds-text-dim); text-transform: uppercase; letter-spacing: 0.04em; }
+		.rename-input { font-family: inherit; font-size: inherit; background: var(--ds-surface-2); color: var(--ds-text); border: 1px solid var(--ds-accent); padding: 3px 6px; border-radius: 3px; min-width: 200px; }
+		.row-select { margin-right: var(--ds-space-1); flex-shrink: 0; width: 18px; height: 18px; visibility: hidden; }
 		body.select-mode-main .dash-main .row-select { visibility: visible; }
 		body.select-mode-modal #others-list .row-select { visibility: visible; }
 		body.select-mode-archived #archived-list .row-select { visibility: visible; }
-		.archived-controls { display: flex; align-items: center; min-height: 30px; }
-		/* Fixed-height header: the normal (title + Select trigger) and select-mode (bulk
-		   toolbar) rows share the same slot so switching between them never pushes the
-		   session list down. */
-		.sessions-header { display: flex; align-items: center; min-height: 34px; margin-top: 1.5em; gap: 10px; }
-		/* The title stays put; only the right-side controls swap between the normal
-		   controls and the bulk toolbar, so nothing disappears or shifts. */
-		.header-right { display: flex; align-items: center; gap: 10px; margin-left: auto; font-size: 0.9em; }
-		.sessions-header h2 { font-size: 1em; margin: 0; }
-		.select-trigger { background: none; border: none; color: #8abeb7; font-family: inherit; font-size: 0.85em; cursor: pointer; padding: 4px 6px; }
-		.dash-columns { display: flex; gap: 2.5em; align-items: flex-start; }
-		.dash-main { flex: 1 1 auto; min-width: 0; }
-		.dash-side { flex: 0 0 380px; }
-		.dash-side .spawn-form { margin-top: 1.5em; }
-		.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: 40; display: flex; align-items: flex-start; justify-content: center; padding: 5vh 16px; }
-		.modal-panel { background: #141414; border: 1px solid #333; border-radius: 6px; width: 100%; max-width: 780px; max-height: 88vh; overflow-y: auto; padding: 0.4em 1.2em 1em; }
-		.modal-panel .sessions-header { margin-top: 0.6em; }
+		.archived-section { margin-top: var(--ds-space-4); border-top: 1px solid var(--ds-border); padding-top: var(--ds-space-2); }
+		.archived-section summary { cursor: pointer; color: var(--ds-text-muted); font-size: var(--ds-font-md); padding: var(--ds-space-2) 0; list-style-position: outside; }
+		.archived-controls { display: flex; align-items: center; min-height: 34px; }
+		.row-btn { font-family: inherit; font-size: var(--ds-font-base); background: transparent; color: var(--ds-text-muted); border: 1px solid var(--ds-border); padding: 6px 12px; border-radius: var(--ds-radius-sm); cursor: pointer; white-space: nowrap; flex-shrink: 0; min-height: 34px; text-decoration: none; display: inline-flex; align-items: center; transition: background-color 0.12s ease, color 0.12s ease; }
+		.row-btn:hover { background: var(--ds-surface-hover); color: var(--ds-text); }
+		.row-btn.primary { background: var(--ds-accent); border-color: var(--ds-accent); color: var(--ds-accent-fg); font-weight: 600; }
+		.row-btn.primary:hover { background: var(--ds-accent-hover); border-color: var(--ds-accent-hover); color: var(--ds-accent-fg); }
+		.row-btn.danger { color: var(--ds-danger); }
+		.row-btn.active { color: var(--ds-warning); }
+		.row-btn:disabled { opacity: 0.4; cursor: default; }
+		.row-btn:disabled:hover { background: transparent; }
+		.select-trigger { background: none; border: none; color: var(--ds-text-muted); font-family: inherit; font-size: var(--ds-font-base); cursor: pointer; padding: 6px 4px; }
+		.select-trigger:hover { color: var(--ds-text); }
+		.spawn-form button[type="submit"], .ns-bar button:not(.select-trigger) { font-family: inherit; font-size: var(--ds-font-base); cursor: pointer; border-radius: var(--ds-radius-sm); }
+		.spawn-form button[type="submit"], #ns-create-form button:first-of-type { background: var(--ds-accent); color: var(--ds-accent-fg); border: 1px solid var(--ds-accent); padding: 8px 14px; font-weight: 600; }
+		.spawn-form button[type="submit"]:hover, #ns-create-form button:first-of-type:hover { background: var(--ds-accent-hover); border-color: var(--ds-accent-hover); }
+		.ns-bar button:disabled { opacity: 0.4; cursor: default; }
+		#ns-delete-btn, #ns-create-form button:last-of-type { background: transparent; color: var(--ds-text-muted); border: 1px solid var(--ds-border); padding: 6px 10px; font-weight: 400; }
+		#ns-delete-btn:not(:disabled):hover, #ns-create-form button:last-of-type:hover { background: var(--ds-surface-hover); color: var(--ds-text); }
+		.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 40; display: flex; align-items: flex-start; justify-content: center; padding: 5vh 16px; }
+		.modal-panel { background: var(--ds-bg); border: 1px solid var(--ds-border); border-radius: var(--ds-radius-lg); width: 100%; max-width: 780px; max-height: 88vh; overflow-y: auto; padding: var(--ds-space-2) var(--ds-space-5) var(--ds-space-5); box-shadow: 0 12px 32px rgba(0,0,0,0.2); }
+		.modal-panel .sessions-header { margin-top: var(--ds-space-2); position: sticky; top: 0; background: var(--ds-bg); z-index: 2; padding-top: var(--ds-space-2); }
+		.pagination { display: flex; align-items: center; justify-content: center; gap: var(--ds-space-3); padding: var(--ds-space-3) 0; font-size: var(--ds-font-sm); }
 		@media (max-width: 900px) {
-			.dash-columns { flex-direction: column; }
+			.dash-columns { flex-direction: column-reverse; gap: var(--ds-space-6); }
 			.dash-side { flex: none; width: 100%; }
+			.spawn-form { padding: 0 0 var(--ds-space-5); border-left: 0; border-bottom: 1px solid var(--ds-border); }
 		}
-		.select-trigger:hover { text-decoration: underline; }
-		.header-right .row-btn { min-height: 28px; }
-		.pagination { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 0.6em 0; font-size: 0.85em; }
-		.pagination .row-btn:disabled { opacity: 0.4; cursor: default; }
-		.pagination .row-btn:disabled:hover { background: #1a1a1a; }
-		.spawn-check { display: flex !important; align-items: center; gap: 6px; margin: 0 !important; font-size: 0.78em !important; color: #777 !important; cursor: pointer; }
-		/* Custom checkbox: the native control looks jarring on the dark theme. */
-		.spawn-check input { appearance: none; -webkit-appearance: none; width: 14px; height: 14px; margin: 0; border: 1px solid #444; border-radius: 3px; background: #1a1a1a; cursor: pointer; position: relative; flex-shrink: 0; }
-		.spawn-check input:hover { border-color: #3a6a5f; }
-		.spawn-check input:checked { background: #2a4a3f; border-color: #3a6a5f; }
-		.spawn-check input:checked::after { content: ""; position: absolute; left: 4px; top: 1px; width: 4px; height: 8px; border: solid #cfe8df; border-width: 0 2px 2px 0; transform: rotate(45deg); }
-		.spawn-check:hover { color: #999 !important; }
-		.dir-suggest { position: relative; }
-		.suggest-list { position: absolute; left: 0; right: 0; z-index: 5; background: #1a1a1a; border: 1px solid #444; border-top: none; border-radius: 0 0 4px 4px; max-height: 200px; overflow-y: auto; }
-		.page-top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-		.page-top h1 { margin: 0; }
-		.page-top .select-trigger { text-decoration: none; }
-		.page-top .select-trigger:hover { text-decoration: underline; }
-		.suggest-list div { padding: 7px 9px; font-size: 0.8em; cursor: pointer; }
-		.suggest-list div:hover { background: #2a2a2a; }
-		@media (max-width: 600px) {
-			body { padding: 10px; }
-			.spawn-form input { max-width: none; }
-			.spawn-form button { width: 100%; }
-			.session-row { flex-direction: column; align-items: stretch; }
-			.session-actions { justify-content: flex-start; }
+		@media (max-width: 640px) {
+			.modal-overlay { padding: 0; align-items: stretch; }
+			.modal-panel { max-width: none; width: 100%; max-height: none; height: 100%; border-radius: 0; padding: 0 var(--ds-space-4) calc(var(--ds-space-4) + env(safe-area-inset-bottom)); }
+			.modal-panel .sessions-header { padding-top: calc(var(--ds-space-3) + env(safe-area-inset-top)); }
+			.session-row { align-items: flex-start; flex-wrap: wrap; }
+			.session-main { flex-wrap: wrap; width: calc(100% - 46px); }
+			.session-main .meta { flex-basis: 100%; }
+			.session-actions { margin-left: auto; }
+			.session-actions .row-btn { min-height: var(--ds-tap-min); }
 			.kebab-wrap { margin-left: auto; }
+			.header-right { gap: var(--ds-space-1); }
+			.ns-bar { font-size: var(--ds-font-xs); }
+			.ns-bar input[type="text"] { width: 130px; }
 			.suggest-list { max-width: none; }
 		}
 	</style>
@@ -916,8 +1296,13 @@ function renderIndexPage(): string {
 <body>
 	<div class="page-top">
 		<h1>pi</h1>
-		<a href="/settings" class="select-trigger">Settings</a>
+		<nav class="page-nav">
+			<a href="/" class="page-nav-link active">Dashboard</a>
+			<a href="/settings" class="page-nav-link">Settings</a>
+			${DASHBOARD_THEME_TOGGLE}
+		</nav>
 	</div>
+	<main class="page-content">
 	<div class="ns-bar" id="ns-bar" style="display:none">
 		<label for="ns-select" id="ns-label">Namespace</label>
 		<select id="ns-select" onchange="onNamespaceSwitch()"></select>
@@ -962,7 +1347,7 @@ function renderIndexPage(): string {
 				<select name="namespace" id="spawn-namespace"></select>
 			</label>
 			<div class="spawn-actions">
-				<button type="submit">Spawn</button>
+				<button type="submit" class="primary-btn">Spawn</button>
 				<label class="spawn-check" title="Create the directory if it doesn't exist"><input type="checkbox" name="mkdir" id="spawn-mkdir"/> Create if missing</label>
 			</div>
 		</form>
@@ -1010,6 +1395,7 @@ function renderIndexPage(): string {
 			</details>
 		</div>
 	</div>
+	</main>
 	<script>
 		if ("serviceWorker" in navigator) {
 			window.addEventListener("load", function() {
@@ -1288,6 +1674,8 @@ function renderIndexPage(): string {
 		// Leaving the modal always exits its select modes so selections can't act invisibly.
 		if (!open && (selectScope === "modal" || selectScope === "archived")) toggleSelectMode(selectScope);
 		document.getElementById("all-sessions-modal").style.display = open ? "" : "none";
+		// Lock page scroll while the modal (a full-height sheet on mobile) is open.
+		document.body.style.overflow = open ? "hidden" : "";
 	}
 	document.getElementById("all-sessions-modal").addEventListener("click", function(e) {
 		if (e.target === e.currentTarget) toggleAllSessions(false);
@@ -1395,8 +1783,8 @@ function renderIndexPage(): string {
 			? '<span class="pin-icon" title="Pinned"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M9.5 1.5l5 5-1.2 1.2-.9-.3-2.6 2.6.3 2.4-1.2 1.2-2.6-2.6-3.8 3.8-.7-.7 3.8-3.8L3 7.7l1.2-1.2 2.4.3 2.6-2.6-.3-.9 1.2-1.2z"/></svg></span>'
 			: "";
 		var openBtn = isLive
-			? '<a class="row-btn" href="/i/' + esc(s.id) + '/">Open</a>'
-			: (s.sessionFile ? '<button class="row-btn" data-action="resume">Resume</button>' : "");
+			? '<a class="row-btn primary" href="/i/' + esc(s.id) + '/">Open</a>'
+			: (s.sessionFile ? '<button class="row-btn primary" data-action="resume">Resume</button>' : "");
 		var key = rowKey(s);
 		var checked = selectedKeys[key] ? " checked" : "";
 		return '' +
@@ -1741,87 +2129,94 @@ function renderIndexPage(): string {
  */
 function renderSettingsPage(): string {
 	return `<!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
 	<meta charset="UTF-8" />
 	<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-	<meta name="theme-color" content="#18181e" />
+	<meta name="theme-color" content="#ffffff" />
 	<link rel="icon" href="/icons/pi.svg" type="image/svg+xml" />
 	<title>pi settings</title>
+	${CLIENT_THEME_BOOTSTRAP_SCRIPT}
 	<style>
-		*, *::before, *::after { box-sizing: border-box; }
-		body { font-family: ui-monospace, monospace; background: #0d0d0d; color: #e6e6e6; margin: 0 auto; padding: 24px 48px; max-width: 900px; }
-		h1 { font-size: 1.2em; margin: 0; }
-		h2 { font-size: 1em; margin: 0 0 0.6em; }
-		h3 { font-size: 0.9em; margin: 0 0 0.5em; color: #999; }
-		a { color: #8abeb7; }
-		.page-top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 1.5em; }
-		.page-top .home-link { text-decoration: none; color: #8abeb7; font-size: 0.9em; }
-		.page-top .home-link:hover { text-decoration: underline; }
-		.section { margin-top: 1.5em; padding: 0.9em 1em 1em; border: 1px solid #2a2a2a; border-radius: 6px; background: #121212; }
-		label { display: block; margin: 0.6em 0 0; font-size: 0.8em; color: #888; }
-		input[type="text"], textarea { font-family: inherit; font-size: 13px; background: #1a1a1a; color: #e6e6e6; border: 1px solid #3a3a3a; padding: 7px 9px; border-radius: 4px; width: 100%; margin-top: 4px; }
-		input[type="text"]::placeholder, textarea::placeholder { color: #555; }
-		textarea { resize: vertical; min-height: 5em; font-family: inherit; }
-		button { font-family: inherit; font-size: 13px; cursor: pointer; background: #2a4a3f; color: #e6e6e6; border: 1px solid #3a6a5f; padding: 7px 16px; border-radius: 4px; }
-		button:hover { background: #3a6a5f; }
-		.row-btn { font-family: inherit; font-size: 0.85em; background: #1a1a1a; color: #8abeb7; border: 1px solid #333; padding: 4px 10px; border-radius: 3px; cursor: pointer; }
-		.row-btn:hover { background: #2a2a2a; }
-		.row-btn.danger { color: #e06060; }
-		.actions { display: flex; align-items: center; gap: 10px; margin-top: 0.8em; }
-		.result { font-size: 0.8em; }
-		.result.error { color: #e06060; }
-		.result.success { color: #60c060; }
-		.meta { color: #666; font-size: 0.85em; }
+${DASHBOARD_BASE_CSS}
+		.page-content { max-width: 760px; }
+		.section { padding: var(--ds-space-5) 0; border-top: 1px solid var(--ds-border); }
+		.section:first-child { padding-top: 0; border-top: 0; }
+		.section h2 { font-size: var(--ds-font-md); margin: 0 0 var(--ds-space-1); }
+		.section-hint { color: var(--ds-text-dim); font-size: var(--ds-font-sm); margin: 0 0 var(--ds-space-3); }
+		label { display: block; margin: var(--ds-space-3) 0 0; font-size: var(--ds-font-sm); color: var(--ds-text-muted); }
+		label:first-of-type { margin-top: 0; }
+		button { font-family: inherit; font-size: var(--ds-font-base); }
+		.section > .dir-suggest input, .snippet-row.editing input, .snippet-row.editing textarea, .snippet-add-form input, .snippet-add-form textarea { width: 100%; }
+		.row-btn { font-family: inherit; font-size: var(--ds-font-base); background: transparent; color: var(--ds-text-muted); border: 1px solid var(--ds-border); padding: 6px 12px; border-radius: var(--ds-radius-sm); cursor: pointer; min-height: 34px; }
+		.row-btn:hover { background: var(--ds-surface-hover); color: var(--ds-text); }
+		.row-btn.danger { color: var(--ds-danger); }
+		.actions { display: flex; align-items: center; gap: var(--ds-space-3); margin-top: var(--ds-space-3); flex-wrap: wrap; }
+		.result { font-size: var(--ds-font-sm); }
+		.result.error { color: var(--ds-danger); }
+		.result.success { color: var(--ds-success); }
 		.dir-suggest { position: relative; }
-		.suggest-list { position: absolute; left: 0; right: 0; z-index: 5; background: #1a1a1a; border: 1px solid #444; border-top: none; border-radius: 0 0 4px 4px; max-height: 200px; overflow-y: auto; }
-		.suggest-list div { padding: 7px 9px; font-size: 0.8em; cursor: pointer; }
-		.suggest-list div:hover { background: #2a2a2a; }
-		.snippet-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; padding: 0.6em 0; flex-wrap: wrap; }
-		.snippet-row + .snippet-row { border-top: 1px solid #1a1a1a; }
+		.suggest-list { position: absolute; left: 0; right: 0; z-index: 5; background: var(--ds-surface-2); border: 1px solid var(--ds-border); border-top: none; border-radius: 0 0 var(--ds-radius-sm) var(--ds-radius-sm); max-height: 200px; overflow-y: auto; box-shadow: 0 8px 20px rgba(0,0,0,0.12); }
+		.suggest-list div { padding: 8px 10px; font-size: var(--ds-font-sm); cursor: pointer; }
+		.suggest-list div:hover { background: var(--ds-surface-hover); }
+		#snippets-list { margin-top: var(--ds-space-2); border-top: 1px solid var(--ds-border); }
+		#snippets-list > .meta:only-child { display: block; padding: var(--ds-space-4) 0; text-align: center; border-bottom: 1px solid var(--ds-border); }
+		.snippet-row { display: flex; justify-content: space-between; align-items: center; gap: var(--ds-space-3); min-height: 52px; padding: 9px var(--ds-space-1); border-bottom: 1px solid var(--ds-border); }
+		.snippet-row:hover:not(.editing) { background: var(--ds-surface); }
 		.snippet-main { min-width: 0; flex: 1; }
-		.snippet-name { font-size: 0.95em; }
-		.snippet-preview { font-size: 0.8em; color: #777; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; }
-		.snippet-actions { display: flex; gap: 6px; flex-shrink: 0; }
-		.snippet-row.editing { flex-direction: column; align-items: stretch; width: 100%; }
-		.snippet-add-form { margin-top: 1.2em; padding-top: 1em; border-top: 1px solid #2a2a2a; }
+		.snippet-name { font-size: var(--ds-font-md); font-weight: 600; }
+		.snippet-preview { font-size: var(--ds-font-sm); color: var(--ds-text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; }
+		.snippet-actions { display: flex; gap: var(--ds-space-2); flex-shrink: 0; }
+		.snippet-row.editing { flex-direction: column; align-items: stretch; width: 100%; padding: var(--ds-space-4) var(--ds-space-1); }
+		.snippet-add-form { margin-top: var(--ds-space-5); }
+		.snippet-add-form h3 { padding-top: var(--ds-space-1); }
 		@media (max-width: 600px) {
-			body { padding: 10px; }
-			.snippet-row { flex-direction: column; align-items: stretch; }
+			.snippet-row { align-items: flex-start; flex-wrap: wrap; }
+			.snippet-main { width: 100%; flex-basis: 100%; }
+			.snippet-actions { justify-content: flex-start; }
+			.snippet-actions .row-btn { min-height: var(--ds-tap-min); }
 		}
 	</style>
 </head>
 <body>
 	<div class="page-top">
-		<h1>Settings</h1>
-		<a href="/" class="home-link">&larr; Back to dashboard</a>
+		<h1>pi</h1>
+		<nav class="page-nav">
+			<a href="/" class="page-nav-link">Dashboard</a>
+			<a href="/settings" class="page-nav-link active">Settings</a>
+			${DASHBOARD_THEME_TOGGLE}
+		</nav>
 	</div>
 
+	<main class="page-content">
 	<div class="section">
 		<h2>Default working directory</h2>
+		<p class="section-hint">Prefills the dashboard's spawn form.</p>
 		<div class="dir-suggest" id="cwd-suggest">
 			<input type="text" id="settings-default-cwd" placeholder="/path/to/project" autocomplete="off" value="${escapeHtml(getDashboardSettings().defaultCwd ?? "")}" />
 			<div class="suggest-list" id="settings-cwd-suggest-list" style="display:none"></div>
 		</div>
 		<div class="actions">
-			<button type="button" onclick="saveDefaultCwd()">Save</button>
+			<button type="button" class="primary-btn" onclick="saveDefaultCwd()">Save</button>
 			<span class="result" id="cwd-result"></span>
 		</div>
 	</div>
 
 	<div class="section">
 		<h2>Snippets</h2>
+		<p class="section-hint">Reusable text, inserted into the chat composer via the {} button.</p>
 		<div id="snippets-list"><span class="meta">Loading…</span></div>
 		<div class="snippet-add-form">
 			<h3>Add snippet</h3>
 			<label>Name<br><input type="text" id="snippet-name-input" maxlength="80" placeholder="Snippet name" /></label>
 			<label>Text<br><textarea id="snippet-text-input" rows="4" placeholder="Snippet text"></textarea></label>
 			<div class="actions">
-				<button type="button" onclick="addSnippet()">Add</button>
+				<button type="button" class="primary-btn" onclick="addSnippet()">Add</button>
 				<span class="result" id="snippet-add-result"></span>
 			</div>
 		</div>
 	</div>
+	</main>
 
 	<script>
 		function esc(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
@@ -1862,7 +2257,7 @@ function renderSettingsPage(): string {
 						'<label>Name<br><input type="text" class="snippet-edit-name" maxlength="80" value="' + esc(s.name) + '" /></label>' +
 						'<label>Text<br><textarea class="snippet-edit-text" rows="4">' + esc(s.text) + '</textarea></label>' +
 						'<div class="actions">' +
-							'<button type="button" onclick="saveSnippetEdit(' + JSON.stringify(s.id) + ')">Save</button>' +
+							'<button type="button" class="primary-btn" onclick="saveSnippetEdit(' + JSON.stringify(s.id) + ')">Save</button>' +
 							'<button type="button" class="row-btn" onclick="cancelSnippetEdit()">Cancel</button>' +
 							'<span class="result" id="snippet-edit-result-' + esc(s.id) + '"></span>' +
 						'</div>' +
@@ -2005,48 +2400,48 @@ function renderReviewPage(): string {
 	<title>pi review</title>
 	<style>
 		*, *::before, *::after { box-sizing: border-box; }
-		body { font-family: ui-monospace, monospace; background: #0d0d0d; color: #e6e6e6; margin: 0; padding: 16px; }
-		header { display: flex; gap: 6px; align-items: center; margin-bottom: 1em; font-size: 13px; color: #999; }
-		header a { color: #8abeb7; text-decoration: none; font-weight: 500; }
-		header a:hover { color: #a0d8cf; }
-		header .sep { color: #555; }
-		header .home-btn { display: inline-flex; align-items: center; padding: 4px 6px; border-radius: 4px; color: #999; }
-		header .home-btn:hover { color: #e6e6e6; background: #1a1a1a; }
-		header .branch { color: #b294bb; background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 3px; padding: 2px 6px; font-size: 0.85em; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-		.panel { background: #141414; border: 1px solid #2a2a2a; border-radius: 6px; padding: 1em; margin-bottom: 1em; }
-		.panel h2 { font-size: 1em; margin: 0 0 0.6em 0; color: #999; }
-		label { display: block; margin: 0.3em 0; font-size: 0.9em; color: #999; }
-		input, button { font-family: inherit; font-size: 15px; background: #1a1a1a; color: #e6e6e6; border: 1px solid #444; padding: 10px 12px; border-radius: 4px; }
+		body { font-family: ui-monospace, monospace; background: #1a1a1a; color: #e8e8e8; margin: 0; padding: 16px; }
+		header { display: flex; gap: 6px; align-items: center; margin-bottom: 1em; font-size: 13px; color: #b7b7b7; }
+		header a { color: #a4c2f4; text-decoration: none; font-weight: 500; }
+		header a:hover { color: #c3d8fa; }
+		header .sep { color: #a4a4a4; }
+		header .home-btn { display: inline-flex; align-items: center; padding: 4px 6px; border-radius: 4px; color: #b7b7b7; }
+		header .home-btn:hover { color: #e8e8e8; background: #2e2e2e; }
+		header .branch { color: #a4c2f4; background: #242424; border: 1px solid #454545; border-radius: 3px; padding: 2px 6px; font-size: 0.85em; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+		.panel { background: #242424; border: 1px solid #454545; border-radius: 6px; padding: 1em; margin-bottom: 1em; }
+		.panel h2 { font-size: 1em; margin: 0 0 0.6em 0; color: #b7b7b7; }
+		label { display: block; margin: 0.3em 0; font-size: 0.9em; color: #b7b7b7; }
+		input, button { font-family: inherit; font-size: 15px; background: #1a1a1a; color: #e8e8e8; border: 1px solid #454545; padding: 10px 12px; border-radius: 4px; }
 		input { width: 100%; max-width: 280px; }
-		button { cursor: pointer; background: #2a4a3f; border-color: #3a6a5f; white-space: nowrap; min-height: 44px; }
-		button:hover { background: #3a6a5f; }
-		button.danger { background: #4a2a2a; border-color: #6a3a3a; }
-		button.danger:hover { background: #6a3a3a; }
+		button { cursor: pointer; background: #a4c2f4; border-color: #a4c2f4; color: #182234; white-space: nowrap; min-height: 44px; }
+		button:hover { background: #c3d8fa; border-color: #c3d8fa; }
+		button.danger { background: #2a1a1a; border-color: #f87171; color: #f87171; }
+		button.danger:hover { background: #f87171; color: #182234; }
 		button:disabled { opacity: 0.5; cursor: default; }
-		button:disabled:hover { background: #2a4a3f; }
+		button:disabled:hover { background: #a4c2f4; }
 		.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 0.3em 0; }
 		.row label { margin: 0; flex: 1; min-width: 120px; }
-		.status { font-size: 0.85em; color: #999; }
-		.status.warn { color: #d7a55b; }
-		.status .num { color: #e6e6e6; font-weight: bold; }
-		.file-list { list-style: none; margin: 0.8em 0 0 0; padding: 0; border: 1px solid #2a2a2a; border-radius: 6px; overflow: hidden; }
-		.file-list li { border-top: 1px solid #1f1f1f; }
+		.status { font-size: 0.85em; color: #b7b7b7; }
+		.status.warn { color: #facc15; }
+		.status .num { color: #e8e8e8; font-weight: bold; }
+		.file-list { list-style: none; margin: 0.8em 0 0 0; padding: 0; border: 1px solid #454545; border-radius: 6px; overflow: hidden; }
+		.file-list li { border-top: 1px solid #454545; }
 		.file-list li:first-child { border-top: none; }
-		.file-row { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: #0a0a0a; border: none; border-radius: 0; color: #e6e6e6; font-size: 0.85em; padding: 10px 12px; min-height: 44px; }
-		.file-row:hover { background: #1a1a1a; }
-		.file-row .box { color: #666; flex-shrink: 0; }
-		.file-row.done .box { color: #60c060; }
-		.file-row.done .path { color: #7a7a7a; }
+		.file-row { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: #1a1a1a; border: none; border-radius: 0; color: #e8e8e8; font-size: 0.85em; padding: 10px 12px; min-height: 44px; }
+		.file-row:hover { background: #2e2e2e; }
+		.file-row .box { color: #a4a4a4; flex-shrink: 0; }
+		.file-row.done .box { color: #4ade80; }
+		.file-row.done .path { color: #a4a4a4; }
 		.file-row .path { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
-		.file-row .tag { flex-shrink: 0; font-size: 0.85em; color: #d7a55b; }
-		.diff-view { background: #0a0a0a; border: 1px solid #2a2a2a; border-radius: 6px; padding: 0; overflow: auto; max-height: 60vh; -webkit-overflow-scrolling: touch; }
+		.file-row .tag { flex-shrink: 0; font-size: 0.85em; color: #facc15; }
+		.diff-view { background: #1a1a1a; border: 1px solid #454545; border-radius: 6px; padding: 0; overflow: auto; max-height: 60vh; -webkit-overflow-scrolling: touch; }
 		.diff-view pre { margin: 0; padding: 12px; font-size: 0.8em; line-height: 1.5; white-space: pre-wrap; word-break: break-all; }
-		.add { color: #60c060; }
-		.del { color: #e06060; }
-		.hdr { color: #8abeb7; }
+		.add { color: #4ade80; }
+		.del { color: #f87171; }
+		.hdr { color: #a4c2f4; }
 		.msg { margin-top: 0.5em; font-size: 0.9em; }
-		.msg.error { color: #e06060; }
-		.msg.success { color: #60c060; }
+		.msg.error { color: #f87171; }
+		.msg.success { color: #4ade80; }
 		.hidden { display: none; }
 		@media (max-width: 600px) {
 			body { padding: 10px; }
@@ -2661,21 +3056,21 @@ function renderTerminalPage(): string {
 	<title>pi terminal</title>
 	<style>
 		*, *::before, *::after { box-sizing: border-box; }
-		body { font-family: ui-monospace, monospace; background: #0d0d0d; color: #e6e6e6; margin: 0; display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
-		header { padding: 10px 14px; border-bottom: 1px solid #2a2a2a; font-size: 13px; color: #999; display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
-		header a { color: #8abeb7; text-decoration: none; font-weight: 500; }
-		header a:hover { color: #a0d8cf; }
-		header .sep { color: #555; }
-		header .home-btn { display: inline-flex; align-items: center; padding: 6px 6px; border-radius: 4px; color: #999; }
-		header .home-btn:hover { color: #e6e6e6; background: #1a1a1a; }
+		body { font-family: ui-monospace, monospace; background: #1a1a1a; color: #e8e8e8; margin: 0; display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
+		header { padding: 10px 14px; border-bottom: 1px solid #454545; font-size: 13px; color: #b7b7b7; display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+		header a { color: #a4c2f4; text-decoration: none; font-weight: 500; }
+		header a:hover { color: #c3d8fa; }
+		header .sep { color: #a4a4a4; }
+		header .home-btn { display: inline-flex; align-items: center; padding: 6px 6px; border-radius: 4px; color: #b7b7b7; }
+		header .home-btn:hover { color: #e8e8e8; background: #2e2e2e; }
 		header .cwd-wrap { flex: 1; text-align: right; }
-		header input { font-family: inherit; font-size: 13px; background: #1a1a1a; color: #e6e6e6; border: 1px solid #444; padding: 6px 8px; border-radius: 4px; width: 160px; }
+		header input { font-family: inherit; font-size: 13px; background: #1a1a1a; color: #e8e8e8; border: 1px solid #454545; padding: 6px 8px; border-radius: 4px; width: 160px; }
 		#output { flex: 1; overflow-y: auto; padding: 12px; font-size: 0.85em; line-height: 1.5; white-space: pre-wrap; word-break: break-all; }
-		#input-line { display: flex; border-top: 1px solid #2a2a2a; flex-shrink: 0; }
-		#input-line span { padding: 12px 10px 12px 14px; color: #60c060; font-size: 15px; user-select: none; }
-		#input-line input { flex: 1; font-family: inherit; font-size: 15px; background: transparent; color: #e6e6e6; border: none; padding: 12px 0; outline: none; }
-		.dim { color: #666; }
-		.err { color: #e06060; }
+		#input-line { display: flex; border-top: 1px solid #454545; flex-shrink: 0; }
+		#input-line span { padding: 12px 10px 12px 14px; color: #4ade80; font-size: 15px; user-select: none; }
+		#input-line input { flex: 1; font-family: inherit; font-size: 15px; background: transparent; color: #e8e8e8; border: none; padding: 12px 0; outline: none; }
+		.dim { color: #a4a4a4; }
+		.err { color: #f87171; }
 		@media (max-width: 600px) {
 			header { padding: 8px 10px; }
 			header input { width: 120px; font-size: 12px; }
@@ -3268,6 +3663,36 @@ export async function startServerWeb(options: ServerWebOptions): Promise<ServerW
 						: content,
 				}),
 			);
+			return;
+		}
+
+		// Read-only file explorer (sidebar EXPLORER tree + file viewer).
+		// GET /i/<id>/files?path=<relative> — directory listing, scoped to the instance's cwd.
+		const filesMatch = /^\/i\/([0-9a-f-]{36})\/files$/.exec(url.pathname);
+		if (request.method === "GET" && filesMatch) {
+			const instance = supervisor.getLiveInstance(filesMatch[1]);
+			if (!instance) {
+				sendText(response, 404, "Unknown instance\n");
+				return;
+			}
+			const relative = url.searchParams.get("path") ?? "";
+			response.writeHead(200, { "content-type": "application/json", "cache-control": "no-cache" });
+			response.end(JSON.stringify(listExplorerDir(instance.cwd, relative)));
+			return;
+		}
+
+		// GET /i/<id>/files/content?path=<relative> — file content, capped at EXPLORER_MAX_FILE_BYTES
+		// and restricted to text-ish files (see isExplorerTextFile).
+		const filesContentMatch = /^\/i\/([0-9a-f-]{36})\/files\/content$/.exec(url.pathname);
+		if (request.method === "GET" && filesContentMatch) {
+			const instance = supervisor.getLiveInstance(filesContentMatch[1]);
+			if (!instance) {
+				sendText(response, 404, "Unknown instance\n");
+				return;
+			}
+			const relative = url.searchParams.get("path") ?? "";
+			response.writeHead(200, { "content-type": "application/json", "cache-control": "no-cache" });
+			response.end(JSON.stringify(readExplorerFile(instance.cwd, relative)));
 			return;
 		}
 

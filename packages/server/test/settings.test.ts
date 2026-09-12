@@ -86,12 +86,12 @@ describe("dashboard settings storage", () => {
 		expect(updateDashboardSettings({ snippets: "nope" }).ok).toBe(false);
 		expect(updateDashboardSettings({ snippets: [{ name: "", text: "x" }] }).ok).toBe(false);
 		expect(updateDashboardSettings({ snippets: [{ name: "x", text: "   " }] }).ok).toBe(false);
-		expect(updateDashboardSettings({ snippets: [{ name: "x".repeat(MAX_SNIPPET_NAME_LENGTH + 1), text: "x" }] }).ok).toBe(
-			false,
-		);
-		expect(updateDashboardSettings({ snippets: [{ name: "x", text: "x".repeat(MAX_SNIPPET_TEXT_LENGTH + 1) }] }).ok).toBe(
-			false,
-		);
+		expect(
+			updateDashboardSettings({ snippets: [{ name: "x".repeat(MAX_SNIPPET_NAME_LENGTH + 1), text: "x" }] }).ok,
+		).toBe(false);
+		expect(
+			updateDashboardSettings({ snippets: [{ name: "x", text: "x".repeat(MAX_SNIPPET_TEXT_LENGTH + 1) }] }).ok,
+		).toBe(false);
 		const tooMany = Array.from({ length: MAX_SNIPPETS + 1 }, (_, i) => ({ name: `s${i}`, text: "t" }));
 		expect(updateDashboardSettings({ snippets: tooMany }).ok).toBe(false);
 		// Nothing was persisted by any rejected update.

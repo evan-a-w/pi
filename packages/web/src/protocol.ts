@@ -233,6 +233,8 @@ export type RpcCommand =
 	| { id?: string; type: "get_session_stats" }
 	| { id?: string; type: "set_model"; provider: string; modelId: string }
 	| { id?: string; type: "set_thinking_level"; level: ThinkingLevel }
+	| { id?: string; type: "cycle_thinking_level" }
+	| { id?: string; type: "get_available_thinking_levels" }
 	| { id?: string; type: "compact"; customInstructions?: string }
 	| { id?: string; type: "set_session_name"; name: string }
 	| { id?: string; type: "new_session"; parentSession?: string }

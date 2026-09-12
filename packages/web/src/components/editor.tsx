@@ -14,7 +14,6 @@ import {
 	workingMessage,
 } from "../state.ts";
 
-const AUTOCOMPLETE_MAX_VISIBLE = 8;
 const TUI_BUILTIN_COMMAND_ORDER = new Map(
 	[
 		"settings",
@@ -56,6 +55,18 @@ const autocompleteIndex = signal(0);
 const autocompleteDismissed = signal(false);
 const sending = signal(false);
 
+/**
+ * Composer draft, local to this module (Editor is a singleton component).
+ * Deliberately NOT the shared `editorText` signal: writing that signal on
+ * every keystroke would make it a shared dependency other components could
+ * accidentally subscribe to, turning every keystroke into an app-wide
+ * re-render trigger. Only this file (and the autocomplete computeds below)
+ * reads `draftText`; `editorText` remains as a one-way channel FROM the rest
+ * of the app INTO the composer (extension `set_editor_text` requests, /fork),
+ * synced into `draftText` by the effect in Editor below.
+ */
+const draftText = signal("");
+
 // Snippet picker: reusable text chunks managed on the dashboard's /settings
 // page (server-persisted), inserted at the composer cursor - never auto-sent.
 interface Snippet {
@@ -91,7 +102,7 @@ async function loadSnippets(): Promise<void> {
 const snippetMatches = computed(() => fuzzyFilter(snippets.value, snippetQuery.value, (snippet) => snippet.name));
 
 function insertAtCursor(textarea: HTMLTextAreaElement | null, text: string): void {
-	const current = editorText.value;
+	const current = draftText.value;
 	const start = textarea?.selectionStart ?? current.length;
 	const end = textarea?.selectionEnd ?? current.length;
 	const before = current.slice(0, start);
@@ -99,7 +110,7 @@ function insertAtCursor(textarea: HTMLTextAreaElement | null, text: string): voi
 	// Keep the snippet on its own line boundary when dropped mid-text.
 	const lead = before.length > 0 && !before.endsWith("\n") ? "\n" : "";
 	const trail = after.length > 0 && !after.startsWith("\n") ? "\n" : "";
-	editorText.value = `${before}${lead}${text}${trail}${after}`;
+	draftText.value = `${before}${lead}${text}${trail}${after}`;
 	const caret = before.length + lead.length + text.length;
 	queueMicrotask(() => {
 		if (!textarea) return;
@@ -234,7 +245,7 @@ function formatAutocompleteDescription(command: RpcSlashCommand): string | undef
 }
 
 const autocompleteQuery = computed(() => {
-	const text = editorText.value;
+	const text = draftText.value;
 	if (!text.startsWith("/") || text.includes(" ") || autocompleteDismissed.value) {
 		return undefined;
 	}
@@ -252,20 +263,6 @@ const autocompleteOpen = computed(() => autocompleteMatches.value.length > 0);
 function getSelectedAutocompleteIndex(matches: RpcSlashCommand[]): number {
 	return matches.length === 0 ? -1 : Math.min(autocompleteIndex.value, matches.length - 1);
 }
-
-const visibleAutocompleteMatches = computed(() => {
-	const matches = autocompleteMatches.value;
-	const selectedIndex = getSelectedAutocompleteIndex(matches);
-	if (selectedIndex === -1) return [];
-	const startIndex = Math.max(
-		0,
-		Math.min(selectedIndex - Math.floor(AUTOCOMPLETE_MAX_VISIBLE / 2), matches.length - AUTOCOMPLETE_MAX_VISIBLE),
-	);
-	return matches.slice(startIndex, startIndex + AUTOCOMPLETE_MAX_VISIBLE).map((command, offset) => ({
-		command,
-		index: startIndex + offset,
-	}));
-});
 
 const isBusy = computed(() => sessionState.value?.isStreaming === true || workingMessage.value !== undefined);
 
@@ -287,12 +284,12 @@ function readFileAsImage(file: File): Promise<ImageContent> {
 }
 
 async function send(): Promise<void> {
-	const text = editorText.value.trim();
+	const text = draftText.value.trim();
 	const images = pendingImages.value;
 	if (sending.value || (text === "" && images.length === 0)) return;
 	if (text === "") return;
 	sending.value = true;
-	editorText.value = "";
+	draftText.value = "";
 	pendingImages.value = [];
 	autocompleteDismissed.value = false;
 	try {
@@ -314,6 +311,8 @@ async function send(): Promise<void> {
 export function Editor() {
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	const pickerRef = useRef<HTMLDivElement>(null);
+	const autocompleteListRef = useRef<HTMLDivElement>(null);
+	const snippetListRef = useRef<HTMLDivElement>(null);
 
 	const autoGrow = () => {
 		const el = textareaRef.current;
@@ -321,6 +320,27 @@ export function Editor() {
 		el.style.height = "auto";
 		el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
 	};
+
+	// External writers (extension `set_editor_text`, /fork) publish through the
+	// shared `editorText` signal; adopt those into the local draft. Typing never
+	// writes `editorText`, so this only fires on those rare external pushes.
+	const pushedText = editorText.value;
+	useEffect(() => {
+		if (pushedText !== draftText.peek()) {
+			draftText.value = pushedText;
+			queueMicrotask(autoGrow);
+		}
+	}, [pushedText]);
+
+	const selectedAutocompleteIndex = getSelectedAutocompleteIndex(autocompleteMatches.value);
+	useEffect(() => {
+		autocompleteListRef.current?.querySelector(".autocomplete-entry.selected")?.scrollIntoView({ block: "nearest" });
+	}, [selectedAutocompleteIndex]);
+
+	const selectedSnippetIndex = Math.min(snippetIndex.value, Math.max(snippetMatches.value.length - 1, 0));
+	useEffect(() => {
+		snippetListRef.current?.querySelector(".snippet-entry.selected")?.scrollIntoView({ block: "nearest" });
+	}, [selectedSnippetIndex]);
 
 	const closeSnippetPicker = () => {
 		snippetPickerOpen.value = false;
@@ -393,7 +413,7 @@ export function Editor() {
 				event.preventDefault();
 				const selected = matches[selectedIndex];
 				if (selected) {
-					editorText.value = `/${selected.name} `;
+					draftText.value = `/${selected.name} `;
 					autocompleteDismissed.value = true;
 					autoGrow();
 				}
@@ -461,15 +481,15 @@ export function Editor() {
 				</div>
 			)}
 			{autocompleteOpen.value && (
-				<div class="autocomplete">
-					{visibleAutocompleteMatches.value.map(({ command, index }) => (
+				<div class="autocomplete" ref={autocompleteListRef}>
+					{autocompleteMatches.value.map((command, index) => (
 						<button
 							key={`${command.source}:${command.name}`}
 							type="button"
 							class={`autocomplete-entry ${index === getSelectedAutocompleteIndex(autocompleteMatches.value) ? "selected" : ""}`}
 							onMouseDown={(event) => {
 								event.preventDefault();
-								editorText.value = `/${command.name} `;
+								draftText.value = `/${command.name} `;
 								autocompleteDismissed.value = true;
 								textareaRef.current?.focus();
 							}}
@@ -480,11 +500,6 @@ export function Editor() {
 							)}
 						</button>
 					))}
-					{autocompleteMatches.value.length > AUTOCOMPLETE_MAX_VISIBLE && (
-						<div class="autocomplete-scroll-info">
-							({getSelectedAutocompleteIndex(autocompleteMatches.value) + 1}/{autocompleteMatches.value.length})
-						</div>
-					)}
 				</div>
 			)}
 			<div class="editor-row">
@@ -503,7 +518,7 @@ export function Editor() {
 							}}
 							onKeyDown={handleSnippetKeyDown}
 						/>
-						<div class="snippet-list">
+						<div class="snippet-list" ref={snippetListRef}>
 							{snippetsLoading.value && snippets.value.length === 0 ? (
 								<div class="snippet-empty">Loading…</div>
 							) : snippets.value.length === 0 ? (
@@ -545,11 +560,11 @@ export function Editor() {
 					placeholder={isBusy.value ? "Steer the agent…" : "Send a message…"}
 					rows={1}
 					enterkeyhint={isCoarsePointer ? "enter" : "send"}
-					value={editorText.value}
+					value={draftText.value}
 					onInput={(event) => {
-						editorText.value = (event.target as HTMLTextAreaElement).value;
+						draftText.value = (event.target as HTMLTextAreaElement).value;
 						autocompleteIndex.value = 0;
-						if (!editorText.value.startsWith("/")) {
+						if (!draftText.value.startsWith("/")) {
 							autocompleteDismissed.value = false;
 						}
 						autoGrow();
@@ -563,7 +578,17 @@ export function Editor() {
 					</button>
 				) : null}
 				<button type="button" class="editor-button send" title="Send" onClick={() => void send()}>
-					▲
+					<svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+						<title>Send</title>
+						<path
+							d="M3 8h10M9 4l4 4-4 4"
+							stroke="currentColor"
+							stroke-width="1.6"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+						/>
+					</svg>
+					Send
 				</button>
 			</div>
 		</div>

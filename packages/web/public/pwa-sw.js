@@ -1,4 +1,5 @@
-const CACHE_VERSION = "pi-web-v1";
+// Bump on any change to caching behavior so old caches are dropped on activate.
+const CACHE_VERSION = "pi-web-v2";
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 
@@ -37,16 +38,22 @@ self.addEventListener("activate", (event) => {
 	);
 });
 
+/**
+ * Only the app shell (navigations) and hashed static assets are handled.
+ * Everything else - REST under /api/, instance-scoped JSON endpoints like
+ * /i/<id>/files, /subagents, /ws - goes straight to the network: serving the
+ * cached HTML shell for a failed JSON request is what produced
+ * `Unexpected token '<', "<!doctype"...` errors in the file explorer.
+ */
 function shouldHandle(request) {
 	if (request.method !== "GET") return false;
 	const url = new URL(request.url);
 	if (url.origin !== self.location.origin) return false;
-	if (url.pathname.endsWith("/ws")) return false;
-	if (url.pathname.startsWith("/api/")) return false;
-	return true;
+	if (request.mode === "navigate") return true;
+	return isStaticAsset(url);
 }
 
-async function networkFirst(request) {
+async function networkFirst(request, { shellFallback }) {
 	const cache = await caches.open(RUNTIME_CACHE);
 	try {
 		const response = await fetch(request);
@@ -57,21 +64,12 @@ async function networkFirst(request) {
 	} catch (error) {
 		const cached = await cache.match(request);
 		if (cached) return cached;
-		const shell = await caches.match(scopeUrl("."));
-		if (shell) return shell;
+		if (shellFallback) {
+			const shell = await caches.match(scopeUrl("."));
+			if (shell) return shell;
+		}
 		throw error;
 	}
-}
-
-async function cacheFirst(request) {
-	const cached = await caches.match(request);
-	if (cached) return cached;
-	const response = await fetch(request);
-	if (response.ok) {
-		const cache = await caches.open(RUNTIME_CACHE);
-		await cache.put(request, response.clone());
-	}
-	return response;
 }
 
 function isStaticAsset(url) {
@@ -88,10 +86,10 @@ function isStaticAsset(url) {
 
 self.addEventListener("fetch", (event) => {
 	if (!shouldHandle(event.request)) return;
-	const url = new URL(event.request.url);
-	if (event.request.mode === "navigate") {
-		event.respondWith(networkFirst(event.request));
-	} else if (isStaticAsset(url)) {
-		event.respondWith(cacheFirst(event.request));
-	}
+	// Network-first for assets too: Vite emits content-hashed filenames, but
+	// index.html itself was cache-first-adjacent via the shell entry, and a
+	// cache-first policy meant a deploy could leave clients on a stale bundle
+	// until the cache was cleared by hand. Network-first keeps offline
+	// fallback while always preferring the freshly deployed files.
+	event.respondWith(networkFirst(event.request, { shellFallback: event.request.mode === "navigate" }));
 });

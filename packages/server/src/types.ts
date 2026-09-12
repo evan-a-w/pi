@@ -55,6 +55,12 @@ export interface InstanceRecord {
 	// auto-respawned (bounded retries) if its process exits unexpectedly.
 	// Mutually exclusive with archived (setting one clears the other).
 	pinned?: boolean;
+	// When this session was (most recently) pinned. Fixes the pinned group's sort
+	// order (ascending, i.e. first-pinned-first): unlike lastSeenAt, activity
+	// never changes it, so pinned sessions don't reshuffle as they're used.
+	// Cleared on unpin; records pinned before this field existed have none (see
+	// listDashboardSessions/refreshSidebarSessions, which fall back to createdAt).
+	pinnedAt?: string;
 	// Hidden from the main dashboard list under a collapsed "Archived" section.
 	// Archiving a live instance stops it first; the record is kept (unlike a
 	// plain stop, which forgets the instance) so it can be unarchived later.

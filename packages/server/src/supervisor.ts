@@ -713,7 +713,11 @@ export class ServerSupervisor {
 
 		const live = this.liveInstances.get(instanceId);
 		if (live) {
-			this.updateRecord(live, { pinned, archived: pinned ? false : live.record.archived });
+			// Stable pinned order (see InstanceRecord.pinnedAt): a fresh pin stamps "now";
+			// re-pinning an already-pinned session keeps its existing timestamp; unpinning
+			// clears it so a later re-pin starts a fresh (later) position.
+			const pinnedAt = pinned ? (live.record.pinnedAt ?? new Date().toISOString()) : undefined;
+			this.updateRecord(live, { pinned, pinnedAt, archived: pinned ? false : live.record.archived });
 			return cloneInstance(live.record);
 		}
 
@@ -721,9 +725,11 @@ export class ServerSupervisor {
 		if (!record) {
 			return undefined;
 		}
+		const pinnedAt = pinned ? (record.pinnedAt ?? new Date().toISOString()) : undefined;
 		const updated: InstanceRecord = {
 			...record,
 			pinned,
+			pinnedAt,
 			archived: pinned ? false : record.archived,
 			lastSeenAt: new Date().toISOString(),
 		};
@@ -739,7 +745,7 @@ export class ServerSupervisor {
 				});
 				const spawnedLive = this.liveInstances.get(spawned.id);
 				if (spawnedLive) {
-					this.updateRecord(spawnedLive, { pinned: true, archived: false });
+					this.updateRecord(spawnedLive, { pinned: true, pinnedAt: updated.pinnedAt, archived: false });
 				}
 				removeInstance(updated.id);
 				return this.liveInstances.get(spawned.id)?.record ?? spawned;
@@ -824,6 +830,7 @@ export class ServerSupervisor {
 
 		if (live) {
 			const wasPinned = live.record.pinned;
+			const wasPinnedAt = live.record.pinnedAt;
 			const { cwd, label, sessionFile } = live.record;
 			await this.cleanupAcquiredResources(live);
 			this.liveInstances.delete(instanceId);
@@ -849,7 +856,7 @@ export class ServerSupervisor {
 				const spawned = await this.spawnInstance({ cwd, label, sessionFile, namespace });
 				const spawnedLive = this.liveInstances.get(spawned.id);
 				if (spawnedLive && wasPinned) {
-					this.updateRecord(spawnedLive, { pinned: true, archived: false });
+					this.updateRecord(spawnedLive, { pinned: true, pinnedAt: wasPinnedAt, archived: false });
 				}
 				removeInstance(live.record.id);
 				return { ok: true, instance: spawnedLive ? cloneInstance(spawnedLive.record) : spawned };
@@ -932,7 +939,7 @@ export class ServerSupervisor {
 				});
 				const live = this.liveInstances.get(spawned.id);
 				if (live) {
-					this.updateRecord(live, { pinned: true, archived: false });
+					this.updateRecord(live, { pinned: true, pinnedAt: record.pinnedAt, archived: false });
 				}
 				if (record.id !== spawned.id) {
 					removeInstance(record.id);
@@ -980,7 +987,7 @@ export class ServerSupervisor {
 			});
 			const live = this.liveInstances.get(spawned.id);
 			if (live) {
-				this.updateRecord(live, { pinned: true, archived: false });
+				this.updateRecord(live, { pinned: true, pinnedAt: record.pinnedAt, archived: false });
 			}
 			if (record.id !== spawned.id) {
 				removeInstance(record.id);

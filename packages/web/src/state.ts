@@ -13,9 +13,16 @@ import type {
 	SessionStats,
 	SubagentFileData,
 	SubagentRunSummary,
+	ThinkingLevel,
 	ToolResultLike,
 	ToolResultMessage,
 } from "./protocol.ts";
+import {
+	ASYNC_STATUS_SNAPSHOT_WIDGET_PREFIX,
+	type AsyncStatusSnapshot,
+	countRunningNodes,
+	parseAsyncStatusSnapshotWidgetLine,
+} from "./subagent-status.ts";
 
 export interface ToolDisplayState {
 	name: string;
@@ -60,6 +67,17 @@ export const statusEntries = signal<Record<string, string>>({});
 export const widgets = signal<Record<string, Widget>>({});
 export const editorText = signal("");
 
+/**
+ * Latest parsed pi-subagents live status snapshot (see subagent-status.ts),
+ * extracted out of whichever widget line carries the
+ * PI_SUBAGENT_ASYNC_JSON: prefix. That line is never stored in `widgets` -
+ * WidgetArea only ever sees free-text widget lines. A malformed snapshot line
+ * is dropped silently and the last good snapshot is kept.
+ */
+export const subagentSnapshot = signal<AsyncStatusSnapshot | undefined>(undefined);
+/** Key of the widget currently supplying subagentSnapshot, so clearing that specific widget clears the snapshot too. */
+let subagentSnapshotWidgetKey: string | undefined;
+
 let nextToastId = 1;
 
 export function pushToast(message: string, kind: Toast["kind"] = "info"): void {
@@ -77,7 +95,8 @@ export function pushToast(message: string, kind: Toast["kind"] = "info"): void {
 // The app is served at / by pi --web and at /i/<instance-id>/ by pi-server;
 // the WS endpoint is always at <base>ws.
 const wsProtocol = location.protocol === "https:" ? "wss" : "ws";
-const basePath = location.pathname.endsWith("/") ? location.pathname : `${location.pathname}/`;
+/** Same-origin base path this SPA is served under; REST endpoints (subagents, files, ...) hang off it. */
+export const basePath = location.pathname.endsWith("/") ? location.pathname : `${location.pathname}/`;
 /** Supervised instance id when served by pi-server, undefined under `pi --web`. */
 export const instanceId = /^\/i\/([0-9a-f-]{36})\//.exec(basePath)?.[1];
 export const client = new RpcClient(`${wsProtocol}://${location.host}${basePath}ws`, {
@@ -97,9 +116,9 @@ function handleConnectionChange(isConnected: boolean, closeCode?: number): void 
 	if (isConnected) {
 		sessionUnreachable.value = false;
 		void sync();
-		// A reconnect is a reasonable moment to also refresh the pinned sessions
-		// sidebar (e.g. another session was pinned/unpinned while this one dropped).
-		void refreshPinnedSessions();
+		// A reconnect is a reasonable moment to also refresh the sidebar's session
+		// list (e.g. another session was pinned/spawned while this one dropped).
+		void refreshSidebarSessions();
 	} else if (closeCode === INSTANCE_UNREACHABLE_CLOSE_CODE) {
 		// The instance id is gone, but the session itself may have come back under
 		// a NEW instance id (server restart respawns pinned sessions). Follow it
@@ -493,12 +512,38 @@ function handleUiRequest(request: RpcExtensionUIRequest): void {
 		case "setWidget": {
 			const next = { ...widgets.value };
 			if (request.widgetLines) {
-				next[request.widgetKey] = {
-					lines: request.widgetLines,
-					placement: request.widgetPlacement ?? "aboveEditor",
-				};
+				// Pull out the async status snapshot line, if any, instead of displaying
+				// its raw JSON: the rest of the widget's lines (if it has any) still
+				// render normally.
+				const displayLines: string[] = [];
+				for (const line of request.widgetLines) {
+					const snapshot = parseAsyncStatusSnapshotWidgetLine(line);
+					if (snapshot) {
+						subagentSnapshot.value = snapshot;
+						subagentSnapshotWidgetKey = request.widgetKey;
+						continue;
+					}
+					if (line.startsWith(ASYNC_STATUS_SNAPSHOT_WIDGET_PREFIX)) {
+						// Malformed snapshot JSON: drop the raw line rather than showing it,
+						// keep whatever snapshot we already had.
+						continue;
+					}
+					displayLines.push(line);
+				}
+				if (displayLines.length > 0) {
+					next[request.widgetKey] = {
+						lines: displayLines,
+						placement: request.widgetPlacement ?? "aboveEditor",
+					};
+				} else {
+					delete next[request.widgetKey];
+				}
 			} else {
 				delete next[request.widgetKey];
+				if (subagentSnapshotWidgetKey === request.widgetKey) {
+					subagentSnapshot.value = undefined;
+					subagentSnapshotWidgetKey = undefined;
+				}
 			}
 			widgets.value = next;
 			break;
@@ -619,6 +664,13 @@ export const forkPickerOpen = signal(false);
 // Subagent inspection panel
 // ============================================================================
 
+/**
+ * Mobile off-canvas state for the left sidebar (hidden inline below 900px; see
+ * .sidebar in style.css). Desktop ignores this - the sidebar is always inline
+ * there.
+ */
+export const sidebarOpen = signal(false);
+
 export type SubagentView = "transcript" | "output" | "outputs";
 
 export const activePanel = signal<"chat" | "subagents">("chat");
@@ -626,11 +678,73 @@ export const subagentRuns = signal<SubagentRunSummary[]>([]);
 export const selectedRunKey = signal<string | undefined>(undefined);
 export const subagentView = signal<SubagentView>("transcript");
 export const subagentFile = signal<SubagentFileData | undefined>(undefined);
+/** True when the last transcript/output/file fetch failed (fetchSubagentJson already toasted); drives an inline retry state instead of leaving the pane blank. */
+export const subagentFileError = signal(false);
 export const subagentLoading = signal(false);
 export const subagentPolling = signal(false);
 
 export function toggleSubagentsPanel(): void {
 	activePanel.value = activePanel.value === "subagents" ? "chat" : "subagents";
+}
+
+// ============================================================================
+// Agents rail (live subagent activity beside the chat, see agents-rail.tsx)
+// ============================================================================
+
+const AGENTS_RAIL_STORAGE_KEY = "pi-web:agents-rail-open";
+
+function loadStoredAgentsRailOpen(): boolean | undefined {
+	try {
+		const raw = localStorage.getItem(AGENTS_RAIL_STORAGE_KEY);
+		if (raw === "true") return true;
+		if (raw === "false") return false;
+		return undefined;
+	} catch {
+		// Storage unavailable (private mode, disabled cookies, ...): fall back to closed.
+		return undefined;
+	}
+}
+
+const storedAgentsRailOpen = loadStoredAgentsRailOpen();
+export const agentsRailOpen = signal(storedAgentsRailOpen ?? false);
+// Skip auto-open once the user has an explicit stored preference either way.
+let agentsRailAutoOpened = storedAgentsRailOpen !== undefined;
+
+export function toggleAgentsRail(): void {
+	agentsRailOpen.value = !agentsRailOpen.value;
+	try {
+		localStorage.setItem(AGENTS_RAIL_STORAGE_KEY, String(agentsRailOpen.value));
+	} catch {
+		// Best-effort; the toggle still works for the current page load.
+	}
+}
+
+// Auto-reveal the rail the first time live subagent activity shows up, so a
+// user who never touched the toggle still notices background work starting.
+effect(() => {
+	if (agentsRailAutoOpened) return;
+	if (countRunningNodes(subagentSnapshot.value) > 0) {
+		agentsRailAutoOpened = true;
+		agentsRailOpen.value = true;
+	}
+});
+
+/**
+ * Jump from an agents rail node into the existing Subagents panel, focused on
+ * the matching run. Snapshot node ids come from pi-subagents' own asyncId,
+ * which the server's subagent run summaries expose as `runId` (async runs)
+ * or embed in `key` as `async:<runId>`; foreground (non-async) runs never
+ * appear in the snapshot, so this only ever matches async/background runs.
+ * If no run list entry matches yet (e.g. it hasn't been fetched), this still
+ * opens the panel so the user isn't left looking at nothing.
+ */
+export async function focusSubagentRun(nodeId: string): Promise<void> {
+	activePanel.value = "subagents";
+	await refreshSubagents();
+	const match = subagentRuns.value.find((run) => run.runId === nodeId || run.key === `async:${nodeId}`);
+	if (match) {
+		await selectSubagentRun(match.key);
+	}
 }
 
 /**
@@ -693,9 +807,11 @@ async function fetchAndSetSubagentFile(key: string | undefined, view: SubagentVi
 	const target = { key, view, path };
 	latestSubagentFileRequest = target;
 	subagentLoading.value = true;
+	subagentFileError.value = false;
 	const data = await fetchSubagentJson<SubagentFileData>(`subagents/file?path=${encodeURIComponent(path)}`);
 	if (latestSubagentFileRequest !== target) return;
 	subagentFile.value = data;
+	subagentFileError.value = data === undefined;
 	subagentLoading.value = false;
 }
 
@@ -739,6 +855,11 @@ export async function selectSubagentOutput(path: string): Promise<void> {
 	await fetchAndSetSubagentFile(selectedRunKey.value, "outputs", path);
 }
 
+/** Retry after a failed transcript/output/file fetch (subagentFileError), re-running the same fetch loadSelectedSubagentFile would have made for the current run/view. */
+export async function retrySubagentFile(): Promise<void> {
+	await loadSelectedSubagentFile();
+}
+
 let subagentPollTimer: ReturnType<typeof setInterval> | undefined;
 
 export function startSubagentPolling(): void {
@@ -766,16 +887,24 @@ export function stopSubagentPolling(): void {
 // Pinned sessions sidebar
 // ============================================================================
 
-export interface PinnedSessionSummary {
+export interface SidebarSessionSummary {
 	id: string;
 	name: string;
 	status: string;
+	pinned: boolean;
+	// Sort key for the pinned group (ascending, i.e. first-pinned-first); see
+	// listDashboardSessions in packages/server/src/web.ts. undefined when unpinned.
+	pinnedAt?: string;
+	messageCount?: number;
+	// ISO timestamp of the session's last activity, if known.
+	modified?: string;
 	// Account namespace (pi-server concept, see packages/server/src/namespaces.ts);
 	// undefined means the implicit default namespace.
 	namespace?: string;
 }
 
-export const pinnedSessions = signal<PinnedSessionSummary[]>([]);
+/** Live sessions in the current namespace, pinned first, for the sidebar's session list. */
+export const sidebarSessions = signal<SidebarSessionSummary[]>([]);
 
 /**
  * This session's own account namespace (pi-server concept), found by matching
@@ -786,54 +915,101 @@ export const pinnedSessions = signal<PinnedSessionSummary[]>([]);
 export const currentNamespace = signal<string | undefined>(undefined);
 
 /**
- * Pinned + live sessions for the in-session sidebar quick-switcher. Pinning is a
- * pi-server/dashboard concept (InstanceRecord.pinned) with no equivalent under
- * bare `pi --web`, where /api/dashboard-sessions does not exist, so this is a
- * no-op there (instanceId is undefined). Stopped pinned sessions are omitted
- * rather than linked: a pinned session auto-respawns while the server is up, so
- * "stopped" here means genuinely unavailable right now.
+ * Live sessions in the current namespace for the sidebar's session list
+ * (pinned first). The dashboard-sessions API is a pi-server/dashboard concept
+ * with no equivalent under bare `pi --web`, so this is a no-op there
+ * (instanceId is undefined).
  */
-export async function refreshPinnedSessions(): Promise<void> {
+export async function refreshSidebarSessions(): Promise<void> {
 	if (!instanceId) return;
 	try {
 		const res = await fetch("/api/dashboard-sessions");
 		if (!res.ok) return;
 		const data = (await res.json()) as {
 			ok: boolean;
-			sessions?: Array<{ id?: string; name: string; status: string; pinned: boolean; namespace?: string }>;
+			sessions?: Array<{
+				id?: string;
+				name: string;
+				status: string;
+				pinned: boolean;
+				pinnedAt?: string;
+				namespace?: string;
+				messageCount?: number;
+				modified?: string;
+			}>;
 		};
 		if (!data.ok || !data.sessions) return;
-		pinnedSessions.value = data.sessions
-			.filter(
-				(session): session is { id: string; name: string; status: string; pinned: boolean; namespace?: string } =>
-					Boolean(session.id) && session.pinned && (session.status === "online" || session.status === "starting"),
-			)
-			.map((session) => ({
-				id: session.id,
-				name: session.name,
-				status: session.status,
-				namespace: session.namespace,
-			}));
+		const live = data.sessions.filter(
+			(
+				session,
+			): session is {
+				id: string;
+				name: string;
+				status: string;
+				pinned: boolean;
+				pinnedAt?: string;
+				namespace?: string;
+				messageCount?: number;
+				modified?: string;
+			} => Boolean(session.id) && (session.status === "online" || session.status === "starting"),
+		);
+		// Pinned first, as a FIXED group ordered by pinnedAt ascending (never by
+		// last-accessed, so using a pinned session doesn't reorder it). Everyone
+		// else stays most-recently-active first.
+		live.sort((a, b) => {
+			if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+			if (a.pinned && b.pinned) return (a.pinnedAt ?? "").localeCompare(b.pinnedAt ?? "");
+			return (b.modified ?? "").localeCompare(a.modified ?? "");
+		});
+		sidebarSessions.value = live.map((session) => ({
+			id: session.id,
+			name: session.name,
+			status: session.status,
+			pinned: session.pinned,
+			pinnedAt: session.pinnedAt,
+			namespace: session.namespace,
+			messageCount: session.messageCount,
+			modified: session.modified,
+		}));
 		currentNamespace.value = data.sessions.find((session) => session.id === instanceId)?.namespace;
 	} catch {
 		// Best-effort: the sidebar keeps its last-known list (or stays empty) on failure.
 	}
 }
 
-let pinnedSessionsPollTimer: ReturnType<typeof setInterval> | undefined;
+let sidebarSessionsPollTimer: ReturnType<typeof setInterval> | undefined;
 
 /** Slow poll (not aggressive) since pin/unpin and spawn/stop are infrequent, manual actions. */
-export function startPinnedSessionsPolling(): void {
-	if (pinnedSessionsPollTimer) return;
-	pinnedSessionsPollTimer = setInterval(() => {
-		void refreshPinnedSessions();
+export function startSidebarSessionsPolling(): void {
+	if (sidebarSessionsPollTimer) return;
+	sidebarSessionsPollTimer = setInterval(() => {
+		void refreshSidebarSessions();
 	}, 30_000);
 }
 
-export function stopPinnedSessionsPolling(): void {
-	if (pinnedSessionsPollTimer) {
-		clearInterval(pinnedSessionsPollTimer);
-		pinnedSessionsPollTimer = undefined;
+export function stopSidebarSessionsPolling(): void {
+	if (sidebarSessionsPollTimer) {
+		clearInterval(sidebarSessionsPollTimer);
+		sidebarSessionsPollTimer = undefined;
+	}
+}
+
+/** Spawn a new session in the given cwd (dashboard-style POST /api/spawn) and navigate to it. */
+export async function spawnSessionAndNavigate(cwd: string): Promise<void> {
+	try {
+		const res = await fetch("/api/spawn", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ cwd, namespace: currentNamespace.value }),
+		});
+		const data = (await res.json()) as { ok?: boolean; instance?: { id: string }; error?: string };
+		if (!data.ok || !data.instance) {
+			pushToast(data.error || "Failed to spawn a new session", "error");
+			return;
+		}
+		location.href = `/i/${data.instance.id}/`;
+	} catch (error) {
+		pushToast(`Failed to spawn a new session: ${error instanceof Error ? error.message : String(error)}`, "error");
 	}
 }
 
@@ -958,6 +1134,45 @@ export async function selectModel(provider: string, modelId: string): Promise<vo
 }
 
 /**
+ * `/thinking <level>` sets it; bare `/thinking` cycles to the next level.
+ * Levels come from the server per model: e.g. Claude Fable can't be set to
+ * "off" and some models lack xhigh/max, and the session silently clamps
+ * unsupported requests - so validate against the real list instead of a
+ * hardcoded one, and let the server do the cycling.
+ */
+export async function setThinkingLevelCommand(args: string): Promise<void> {
+	if (!args) {
+		const response = await client.command({ type: "cycle_thinking_level" });
+		if (!response.success) {
+			reportFailure(response, "Failed to change thinking level");
+			return;
+		}
+		const data = dataAs<{ level: ThinkingLevel } | null>(response, "cycle_thinking_level");
+		if (!data) {
+			pushToast("This model does not support thinking levels", "info");
+			return;
+		}
+		if (sessionState.value) sessionState.value = { ...sessionState.value, thinkingLevel: data.level };
+		pushToast(`Thinking level: ${data.level}`, "info");
+		return;
+	}
+	const available = await client.command({ type: "get_available_thinking_levels" });
+	const levels = dataAs<{ levels: ThinkingLevel[] }>(available, "get_available_thinking_levels")?.levels ?? [];
+	const wanted = args.toLowerCase() as ThinkingLevel;
+	if (!levels.includes(wanted)) {
+		pushToast(`"${args}" is not available for this model (use ${levels.join(", ") || "off"})`, "error");
+		return;
+	}
+	const response = await client.command({ type: "set_thinking_level", level: wanted });
+	if (!response.success) {
+		reportFailure(response, "Failed to set thinking level");
+		return;
+	}
+	if (sessionState.value) sessionState.value = { ...sessionState.value, thinkingLevel: wanted };
+	pushToast(`Thinking level: ${wanted}`, "info");
+}
+
+/**
  * Execute a builtin slash command (/compact, /new, /model, ...). Returns true
  * when the command was handled here; false when it should go through `prompt`
  * (extension/prompt/skill commands).
@@ -997,6 +1212,11 @@ export async function executeBuiltinCommand(text: string): Promise<boolean> {
 			} else {
 				modelPickerOpen.value = true;
 			}
+			return true;
+		}
+		case "thinking":
+		case "effort": {
+			await setThinkingLevelCommand(args);
 			return true;
 		}
 		case "session": {

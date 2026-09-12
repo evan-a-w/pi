@@ -91,6 +91,7 @@ export function AssistantMessageView({ message }: { message: AssistantMessage })
 	);
 	return (
 		<div class="msg msg-assistant">
+			{hasVisibleContent && message.model ? <div class="msg-assistant-model">{message.model}</div> : null}
 			{message.content.map((block, index) => {
 				if (block.type === "thinking") {
 					return <ThinkingBlock key={`thinking-${index}`} block={block} />;

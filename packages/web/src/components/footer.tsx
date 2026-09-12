@@ -1,5 +1,13 @@
-import { sessionState, stats, statusEntries, workingMessage } from "../state.ts";
-import { applyTheme, availableThemes, themeName } from "../theme.ts";
+import {
+	executeBuiltinCommand,
+	modelPickerOpen,
+	sessionState,
+	setThinkingLevelCommand,
+	slashCommands,
+	stats,
+	statusEntries,
+	workingMessage,
+} from "../state.ts";
 
 function formatTokens(count: number): string {
 	if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
@@ -7,14 +15,21 @@ function formatTokens(count: number): string {
 	return String(count);
 }
 
-export function Footer() {
+/**
+ * Bottom status strip, pinned under the composer: current model (click cycles
+ * the model picker), thinking level (click cycles it), a Compact shortcut
+ * when the session exposes /compact, and session cost/tokens. Theme switching
+ * lives in the topbar toggle (see app.tsx ThemeToggle) - keeping a single
+ * control avoids two dark/light toggles disagreeing with each other.
+ */
+export function StatusStrip() {
 	const state = sessionState.value;
 	const sessionStats = stats.value;
 	const statusTexts = Object.values(statusEntries.value);
-	const context = sessionStats?.contextUsage;
+	const hasCompact = slashCommands.value.some((command) => command.name === "compact");
 
 	return (
-		<footer class="footer">
+		<footer class="status-strip">
 			{workingMessage.value && (
 				<div class="working-indicator">
 					{workingMessage.value}
@@ -22,32 +37,46 @@ export function Footer() {
 				</div>
 			)}
 			{statusTexts.length > 0 && <div class="status-entries">{statusTexts.join(" · ")}</div>}
-			<div class="footer-row">
-				<span class="footer-left">
-					{state?.model ? `${state.model.name} · ${state.thinkingLevel}` : "no model"}
-				</span>
-				<span class="footer-right">
-					{context && context.percent !== null && context.percent !== undefined && (
-						<span title={`${context.tokens ?? "?"} / ${context.contextWindow} tokens`}>
-							{context.percent}% ctx
-						</span>
+			<div class="status-strip-row">
+				<span class="status-strip-left">
+					{state?.model ? (
+						<button
+							type="button"
+							class="status-strip-btn"
+							title="Change model"
+							onClick={() => {
+								modelPickerOpen.value = true;
+							}}
+						>
+							{state.model.name}
+						</button>
+					) : (
+						<span>no model</span>
 					)}
+					{state?.model ? (
+						<button
+							type="button"
+							class="status-strip-btn"
+							title="Thinking level (click to cycle)"
+							onClick={() => void setThinkingLevelCommand("")}
+						>
+							{state.thinkingLevel}
+						</button>
+					) : null}
+					{hasCompact ? (
+						<button
+							type="button"
+							class="status-strip-btn"
+							title="Compact context"
+							onClick={() => void executeBuiltinCommand("/compact")}
+						>
+							Compact
+						</button>
+					) : null}
+				</span>
+				<span class="status-strip-right">
 					{sessionStats && <span title="Session cost">${sessionStats.cost.toFixed(4)}</span>}
 					{sessionStats && <span title="Total tokens">{formatTokens(sessionStats.tokens.total)}</span>}
-					<select
-						class="theme-toggle"
-						title="Theme"
-						value={themeName.value}
-						onChange={(event) => {
-							void applyTheme((event.target as HTMLSelectElement).value);
-						}}
-					>
-						{availableThemes.value.map((name) => (
-							<option key={name} value={name}>
-								{name}
-							</option>
-						))}
-					</select>
 				</span>
 			</div>
 		</footer>

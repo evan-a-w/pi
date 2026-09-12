@@ -115,6 +115,12 @@ export const RPC_BUILTIN_COMMANDS: ReadonlyArray<{ name: string; description: st
 	{ name: "new", description: "Start a new session" },
 	{ name: "name", description: "Set session display name", argumentHint: "<name>" },
 	{ name: "model", description: "Select model", argumentHint: "<provider/model>" },
+	{
+		name: "thinking",
+		description: "Set thinking level (no argument cycles to the next level)",
+		argumentHint: "[off|minimal|low|medium|high|xhigh|max]",
+	},
+	{ name: "effort", description: "Alias for /thinking", argumentHint: "[level]" },
 	{ name: "session", description: "Show session info and stats" },
 	{ name: "export", description: "Export session to HTML on the server", argumentHint: "[path]" },
 	{ name: "copy", description: "Copy last agent message to clipboard" },

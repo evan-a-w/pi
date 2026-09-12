@@ -102,6 +102,7 @@ export function ToolExecution({
 				<span class="tool-name">{name}</span>
 				{summary && <span class="tool-summary">{summary}</span>}
 				{status === "running" && <span class="tool-running-indicator">…</span>}
+				{isLong && <span class="tool-chevron">{expanded ? "▴" : "▾"}</span>}
 			</button>
 			{(hasDiff || output) && (
 				<div class={`tool-body ${isLong && !expanded ? "collapsed" : ""}`}>

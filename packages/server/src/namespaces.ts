@@ -96,6 +96,10 @@ function piCliInvocation(): { command: string; args: string[] } {
  * load the packages on their next restart.
  */
 function installDefaultPackages(name: string): void {
+	// Never spawn real npm installs from the test suite (every createNamespace
+	// call would fork `pi install` x2 against the network) or when explicitly
+	// disabled for a deployment.
+	if (process.env.VITEST || process.env.PI_SERVER_SKIP_DEFAULT_PACKAGES) return;
 	const { command, args } = piCliInvocation();
 	const env = { ...process.env, PI_CODING_AGENT_DIR: getNamespaceAgentDir(name) };
 	const runNext = (index: number): void => {

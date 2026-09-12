@@ -1,4 +1,4 @@
-import { effect, type Signal } from "@preact/signals";
+import { effect, type Signal, signal } from "@preact/signals";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal as XTerm } from "@xterm/xterm";
 import type { RefObject } from "preact";
@@ -280,17 +280,85 @@ function StatusOverlay({ status }: { status: SessionStatus }) {
 	return <div class="terminal-status-overlay">{status === "reconnecting" ? "Reconnecting…" : "Opening…"}</div>;
 }
 
+// ============================================================================
+// Resizable terminal panel height (drag handle on the panel's top edge).
+// ============================================================================
+
+const TERMINAL_HEIGHT_STORAGE_KEY = "pi-web-terminal-height";
+const TERMINAL_MIN_HEIGHT = 140;
+
+function loadStoredTerminalHeight(): number | undefined {
+	const raw = localStorage.getItem(TERMINAL_HEIGHT_STORAGE_KEY);
+	const parsed = raw ? Number(raw) : undefined;
+	return parsed !== undefined && Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+/** Height in px; falls back to the panel's default 45vh (see .terminal-panel in style.css) until the user drags it. */
+const terminalHeight = signal<number | undefined>(loadStoredTerminalHeight());
+
+function clampTerminalHeight(height: number): number {
+	return Math.min(Math.max(height, TERMINAL_MIN_HEIGHT), window.innerHeight - 120);
+}
+
+/** Drag handle on the terminal panel's top edge; dragging up (smaller clientY) grows the panel. */
+function TerminalResizeHandle({ panelRef }: { panelRef: RefObject<HTMLDivElement | null> }) {
+	const startResize = (event: PointerEvent) => {
+		event.preventDefault();
+		const handle = event.currentTarget as HTMLButtonElement;
+		handle.setPointerCapture(event.pointerId);
+		const startY = event.clientY;
+		const startHeight = panelRef.current?.getBoundingClientRect().height ?? clampTerminalHeight(400);
+		document.body.classList.add("terminal-resizing");
+
+		const onMove = (moveEvent: PointerEvent) => {
+			if (moveEvent.pointerId !== event.pointerId) return;
+			terminalHeight.value = clampTerminalHeight(startHeight + startY - moveEvent.clientY);
+		};
+		const onEnd = (endEvent: PointerEvent) => {
+			if (endEvent.pointerId !== event.pointerId) return;
+			handle.removeEventListener("pointermove", onMove);
+			handle.removeEventListener("pointerup", onEnd);
+			handle.removeEventListener("pointercancel", onEnd);
+			document.body.classList.remove("terminal-resizing");
+			if (terminalHeight.value !== undefined) {
+				try {
+					localStorage.setItem(TERMINAL_HEIGHT_STORAGE_KEY, String(terminalHeight.value));
+				} catch {
+					// Resizing still works when storage is unavailable.
+				}
+			}
+		};
+		handle.addEventListener("pointermove", onMove);
+		handle.addEventListener("pointerup", onEnd);
+		handle.addEventListener("pointercancel", onEnd);
+	};
+
+	return (
+		<button
+			type="button"
+			class="terminal-resize-handle"
+			title="Drag to resize terminal"
+			aria-label="Resize terminal panel"
+			onPointerDown={startResize}
+		/>
+	);
+}
+
 export function TerminalView() {
 	const hostRef = useRef<HTMLDivElement | null>(null);
 	const termRef = useRef<XTerm | null>(null);
+	const panelRef = useRef<HTMLDivElement | null>(null);
 	const isOpen = terminalOpen.value;
 
 	const status = useXtermSession(isOpen, hostRef, termRef, terminalFamily);
 
 	if (!isOpen) return null;
 
+	const height = terminalHeight.value;
+
 	return (
-		<div class="terminal-panel">
+		<div class="terminal-panel" ref={panelRef} style={height !== undefined ? { height: `${height}px` } : undefined}>
+			<TerminalResizeHandle panelRef={panelRef} />
 			<div class="terminal-header">
 				<span class="terminal-title">terminal</span>
 				<button

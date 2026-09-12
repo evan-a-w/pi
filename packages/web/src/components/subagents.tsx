@@ -2,6 +2,7 @@ import { useEffect } from "preact/hooks";
 import type { SubagentRunSummary } from "../protocol.ts";
 import {
 	refreshSubagents,
+	retrySubagentFile,
 	selectedRunKey,
 	selectSubagentOutput,
 	selectSubagentRun,
@@ -9,9 +10,11 @@ import {
 	startSubagentPolling,
 	stopSubagentPolling,
 	subagentFile,
+	subagentFileError,
 	subagentLoading,
 	subagentRuns,
 	subagentView,
+	toggleSubagentsPanel,
 	tuiActive,
 } from "../state.ts";
 import { MarkdownView } from "./markdown-view.tsx";
@@ -19,6 +22,17 @@ import { MarkdownView } from "./markdown-view.tsx";
 // ============================================================================
 // Formatting helpers
 // ============================================================================
+
+function SubagentsHeader() {
+	return (
+		<div class="subagents-panel-header">
+			<span>Run history</span>
+			<button type="button" class="subagents-back-to-chat" onClick={toggleSubagentsPanel}>
+				← Back to chat
+			</button>
+		</div>
+	);
+}
 
 function formatTime(ms: number | undefined): string {
 	if (!ms || !Number.isFinite(ms)) return "—";
@@ -139,6 +153,13 @@ function parseTranscript(content: string): TranscriptLine[] {
 	return lines;
 }
 
+/** user/assistant text is prose meant to be read; everything else (tool calls, raw JSON,
+ * bash-style output) is a log line and stays monospace, matching messages.tsx's split
+ * between MarkdownView (prose) and <pre> (logs/output). */
+function isProseRole(role: string): boolean {
+	return role === "user" || role === "assistant";
+}
+
 function TranscriptContent({ content }: { content: string }) {
 	const lines = parseTranscript(content);
 	if (lines.length === 0) {
@@ -161,7 +182,15 @@ function TranscriptContent({ content }: { content: string }) {
 							) : null}
 							{line.meta ? <span class="transcript-meta">{line.meta}</span> : null}
 						</div>
-						{displayText ? <pre class="transcript-text">{displayText}</pre> : null}
+						{displayText ? (
+							isProseRole(line.role) ? (
+								<div class="transcript-prose">
+									<MarkdownView text={displayText} />
+								</div>
+							) : (
+								<pre class="transcript-text">{displayText}</pre>
+							)
+						) : null}
 					</div>
 				);
 			})}
@@ -241,6 +270,7 @@ export function SubagentsPanel() {
 	if (runs.length === 0) {
 		return (
 			<div class="subagents-panel">
+				<SubagentsHeader />
 				{tuiActive.value ? (
 					<div class="subagents-tui-note">
 						TUI is still attached in the background; chat is blocked until it closes.
@@ -260,6 +290,7 @@ export function SubagentsPanel() {
 
 	return (
 		<div class="subagents-panel">
+			<SubagentsHeader />
 			{tuiActive.value ? (
 				<div class="subagents-tui-note">
 					TUI is still attached in the background; chat is blocked until it closes.
@@ -271,93 +302,121 @@ export function SubagentsPanel() {
 					below).
 				</div>
 			) : null}
-			<div class="subagents-tabs">
-				{runs.map((run) => (
-					<button
-						type="button"
-						key={run.key}
-						class={`subagents-tab ${run.key === selectedKey ? "active" : ""}`}
-						title={`${run.agent} · ${run.runId} · ${STATUS_LABEL[run.status]}${run.fromEarlierSession ? " · earlier session" : ""}`}
-						onClick={() => void selectSubagentRun(run.key)}
-					>
-						<span class={`status-dot ${run.status}`} />
-						<span class="subagents-tab-agent">{run.agent}</span>
-						<span class="subagents-tab-runid">{run.runId.slice(0, 6)}</span>
-						{run.fromEarlierSession ? <span class="subagents-tab-stale">⏴</span> : null}
-					</button>
-				))}
-			</div>
-			{selected ? (
-				<div class="subagents-body">
-					<RunMeta run={selected} />
-					<div class="subagents-view-tabs">
+			<div class="subagents-layout">
+				<div class="subagents-list">
+					{runs.map((run) => (
 						<button
 							type="button"
-							class={view === "transcript" ? "active" : ""}
-							disabled={!selected.transcriptPath}
-							onClick={() => void setSubagentView("transcript")}
+							key={run.key}
+							class={`subagents-list-item ${run.key === selectedKey ? "active" : ""}`}
+							title={`${run.agent} · ${run.runId} · ${STATUS_LABEL[run.status]}${run.fromEarlierSession ? " · earlier session" : ""}`}
+							onClick={() => void selectSubagentRun(run.key)}
 						>
-							Transcript
-							{selected.transcriptBytes !== undefined ? (
-								<span class="subagents-view-size"> ({formatBytes(selected.transcriptBytes)})</span>
-							) : null}
+							<div class="subagents-list-item-row">
+								<span class={`status-dot ${run.status}`} />
+								<span class="subagents-list-item-agent">{run.agent}</span>
+								<span class={`subagents-list-status ${run.status}`}>{STATUS_LABEL[run.status]}</span>
+							</div>
+							<div class="subagents-list-item-row">
+								<span class="subagents-list-item-runid">{run.runId.slice(0, 6)}</span>
+								<span class="subagents-list-item-time" title={formatDate(run.startedAt)}>
+									{formatTime(run.startedAt)}
+								</span>
+								{run.fromEarlierSession ? (
+									<span class="subagents-tab-stale" title="From an earlier session state">
+										⏴
+									</span>
+								) : null}
+							</div>
 						</button>
-						<button
-							type="button"
-							class={view === "output" ? "active" : ""}
-							disabled={!hasOutput}
-							onClick={() => void setSubagentView("output")}
-						>
-							Output
-						</button>
-						{hasFiles ? (
+					))}
+				</div>
+				{selected ? (
+					<div class="subagents-detail">
+						<RunMeta run={selected} />
+						<div class="subagents-view-tabs">
 							<button
 								type="button"
-								class={view === "outputs" ? "active" : ""}
-								onClick={() => void setSubagentView("outputs")}
+								class={view === "transcript" ? "active" : ""}
+								disabled={!selected.transcriptPath}
+								onClick={() => void setSubagentView("transcript")}
 							>
-								Files ({selected.outputs?.length})
+								Transcript
+								{selected.transcriptBytes !== undefined ? (
+									<span class="subagents-view-size"> ({formatBytes(selected.transcriptBytes)})</span>
+								) : null}
 							</button>
-						) : null}
-					</div>
-					<div class="subagents-content">
-						{loading && !file ? <div class="subagents-loading">Loading…</div> : null}
-						{!loading && !file && view === "transcript" && !selected.transcriptPath ? (
-							<div class="subagents-empty">No transcript available for this run.</div>
-						) : null}
-						{!loading && !file && view === "output" && !hasOutput ? (
-							<div class="subagents-empty">No output available for this run.</div>
-						) : null}
-						{view === "outputs" && selected.outputs ? (
-							<div class="subagents-files">
-								{selected.outputs.map((output) => (
-									<button
-										type="button"
-										class={`subagents-file ${file?.path === output.path ? "active" : ""}`}
-										key={output.path}
-										onClick={() => void selectSubagentOutput(output.path)}
-									>
-										<span>{output.name}</span>
-										<span class="subagents-view-size">{formatBytes(output.bytes)}</span>
+							<button
+								type="button"
+								class={view === "output" ? "active" : ""}
+								disabled={!hasOutput}
+								onClick={() => void setSubagentView("output")}
+							>
+								Output
+							</button>
+							{hasFiles ? (
+								<button
+									type="button"
+									class={view === "outputs" ? "active" : ""}
+									onClick={() => void setSubagentView("outputs")}
+								>
+									Files ({selected.outputs?.length})
+								</button>
+							) : null}
+						</div>
+						<div class="subagents-content">
+							{loading && !file ? <div class="subagents-loading">Loading…</div> : null}
+							{!loading && subagentFileError.value ? (
+								<div class="subagents-error">
+									Failed to load this file.{" "}
+									<button type="button" class="subagents-retry" onClick={() => void retrySubagentFile()}>
+										Retry
 									</button>
-								))}
-							</div>
-						) : null}
-						{view === "transcript" && file ? <TranscriptContent content={file.content} /> : null}
-						{view === "output" && file ? (
-							<div class="subagents-output">
-								<MarkdownView text={file.content} />
-							</div>
-						) : null}
-						{view === "outputs" && file && selected.outputs?.some((output) => output.path === file.path) ? (
-							<div class="subagents-output">
-								<MarkdownView text={file.content} />
-							</div>
-						) : null}
-						{file?.truncated ? <div class="subagents-truncated">File truncated at 4MB by the server.</div> : null}
+								</div>
+							) : null}
+							{!loading &&
+							!subagentFileError.value &&
+							!file &&
+							view === "transcript" &&
+							!selected.transcriptPath ? (
+								<div class="subagents-empty">No transcript available for this run.</div>
+							) : null}
+							{!loading && !subagentFileError.value && !file && view === "output" && !hasOutput ? (
+								<div class="subagents-empty">No output available for this run.</div>
+							) : null}
+							{view === "outputs" && selected.outputs ? (
+								<div class="subagents-files">
+									{selected.outputs.map((output) => (
+										<button
+											type="button"
+											class={`subagents-file ${file?.path === output.path ? "active" : ""}`}
+											key={output.path}
+											onClick={() => void selectSubagentOutput(output.path)}
+										>
+											<span>{output.name}</span>
+											<span class="subagents-view-size">{formatBytes(output.bytes)}</span>
+										</button>
+									))}
+								</div>
+							) : null}
+							{view === "transcript" && file ? <TranscriptContent content={file.content} /> : null}
+							{view === "output" && file ? (
+								<div class="subagents-output">
+									<MarkdownView text={file.content} />
+								</div>
+							) : null}
+							{view === "outputs" && file && selected.outputs?.some((output) => output.path === file.path) ? (
+								<pre class="subagents-file-content">
+									<code>{file.content}</code>
+								</pre>
+							) : null}
+							{file?.truncated ? (
+								<div class="subagents-truncated">File truncated at 4MB by the server.</div>
+							) : null}
+						</div>
 					</div>
-				</div>
-			) : null}
+				) : null}
+			</div>
 		</div>
 	);
 }

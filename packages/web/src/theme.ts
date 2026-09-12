@@ -82,11 +82,9 @@ async function loadAvailableThemes(): Promise<void> {
 	}
 }
 
+/** Light is the app's default look (see docs/screenshot2.png reference); dark is opt-in via the status strip's theme select. */
 function defaultThemeName(themes: string[]): string {
-	if (window.matchMedia("(prefers-color-scheme: light)").matches && themes.includes("light")) {
-		return "light";
-	}
-	return themes.includes("dark") ? "dark" : themes[0];
+	return themes.includes("light") ? "light" : themes[0];
 }
 
 export async function initTheme(): Promise<void> {
@@ -126,7 +124,11 @@ export async function applyTheme(name: string): Promise<void> {
 		style.setProperty("--pi-cardBg", theme.export.cardBg);
 	}
 
-	root.style.colorScheme = /light/i.test(name) ? "light" : "dark";
+	const isLight = /light/i.test(name);
+	root.style.colorScheme = isLight ? "light" : "dark";
+	// Drives the app chrome tokens in style.css (--bg/--text/--accent/...),
+	// independent of the --pi-* TUI theme colors applied above.
+	root.dataset.theme = isLight ? "light" : "dark";
 	localStorage.setItem(THEME_STORAGE_KEY, name);
 	themeName.value = name;
 }
