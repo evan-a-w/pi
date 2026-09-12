@@ -1,0 +1,53 @@
+{
+	"name": "@caduc-ai/pi-dashboard",
+	"version": "0.85.1",
+	"description": "experimental server package for pi",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"bin": {
+		"pi-server": "./dist/cli.js"
+	},
+	"files": [
+		"dist",
+		"README.md",
+		"CHANGELOG.md"
+	],
+	"scripts": {
+		"clean": "shx rm -rf dist",
+		"dev": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
+		"build": "tsgo -p tsconfig.build.json && shx chmod +x dist/cli.js",
+		"prepublishOnly": "npm run clean && npm run build",
+		"test": "vitest --run"
+	},
+	"keywords": [
+		"pi",
+		"server"
+	],
+	"author": "Earendil Works",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/earendil-works/pi.git",
+		"directory": "packages/dashboard"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"dependencies": {
+		"@earendil-works/pi-coding-agent": "^0.85.1",
+		"@earendil-works/pi-web": "^0.85.1",
+		"ws": "8.21.1"
+	},
+	"devDependencies": {
+		"@types/ws": "8.18.1",
+		"shx": "0.4.0",
+		"vitest": "4.1.9"
+	}
+}

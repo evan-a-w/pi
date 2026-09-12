@@ -4,6 +4,7 @@
 
 export { runWebMode, type WebModeOptions } from "../web/web-mode.ts";
 export { InteractiveMode, type InteractiveModeOptions } from "./interactive/interactive-mode.ts";
+export type { JsonAgentSessionEvent } from "./json-event.ts";
 export { type PrintModeOptions, runPrintMode } from "./print-mode.ts";
 export { type ModelInfo, RpcClient, type RpcClientOptions, type RpcEventListener } from "./rpc/rpc-client.ts";
 export { runRpcMode } from "./rpc/rpc-mode.ts";

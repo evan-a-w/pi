@@ -65,6 +65,32 @@
 - Fixed the dashboard's select mode shifting the whole session list: entering it toggled per-row checkboxes from `display:none` (indenting every row) and inserted a bulk-actions toolbar above the list (pushing everything down). Checkboxes now reserve their column space via `visibility` instead of `display`, and the bulk toolbar swaps in place of the "Sessions" header line instead of adding a row, so nothing jumps. The "Select" trigger moved from a full button next to the heading to a small text link right-aligned on that same header line.
 - Fixed pinned sessions reordering by last-accessed instead of staying put: pinning now stamps `InstanceRecord.pinnedAt`, and `listDashboardSessions` (used by both the dashboard and the web UI's sidebar) sorts the pinned group by `pinnedAt` ascending (first-pinned-first, falling back to `createdAt` for records pinned before this field existed) instead of by activity; unpinned sessions still sort by last-accessed as before.
 
+## [0.85.1] - 2026-09-05
+
+## [0.85.0] - 2026-09-04
+
+## [0.84.4] - 2026-08-28
+
+## [0.84.3] - 2026-08-24
+
+## [0.84.2] - 2026-08-14
+
+## [0.84.1] - 2026-08-07
+
+## [0.84.0] - 2026-08-06
+
+### Breaking Changes
+
+- Changed `toProtocolToolResultMessage()` to require the original `ToolCall` and verify tool result association.
+- Changed `PiServerService.listSessions()` to return durable `SessionMetadata` instead of runtime `SessionSummary` values ([#7708](https://github.com/earendil-works/pi/pull/7708)).
+
+### Fixed
+
+- Hardened protocol adapters against contradictory lifecycle states, invalid identifiers and timestamps, sparse execution arrays, and additive `pi-ai` contract drift.
+- Sanitized service and runtime failures into stable `not_implemented` and `internal_error` responses without exposing private error details ([#7644](https://github.com/earendil-works/pi/pull/7644)).
+
+## [0.83.0] - 2026-07-29
+
 ## [0.82.1] - 2026-07-25
 
 ## [0.82.0] - 2026-07-24

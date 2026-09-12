@@ -6,6 +6,8 @@ import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
 type GeneratedModelGroups = {
 	"openai-completions": {
+		"@cf/deepseek-ai/deepseek-v4-flash-0731": object;
+		"@cf/deepseek-ai/deepseek-v4-pro-0813": object;
 		"@cf/google/gemma-4-26b-a4b-it": object;
 		"@cf/ibm-granite/granite-4.0-h-micro": object;
 		"@cf/meta/llama-3.3-70b-instruct-fp8-fast": object;
@@ -17,8 +19,11 @@ type GeneratedModelGroups = {
 		"@cf/openai/gpt-oss-120b": object;
 		"@cf/openai/gpt-oss-20b": object;
 		"@cf/qwen/qwen3-30b-a3b-fp8": object;
+		"@cf/qwen/qwen3.8-27b": object;
 		"@cf/zai-org/glm-4.7-flash": object;
 		"@cf/zai-org/glm-5.2": object;
+		"@cf/zai-org/glm-5.3": object;
+		"@cf/zai-org/glm-5.3-flash": object;
 	};
 };
 

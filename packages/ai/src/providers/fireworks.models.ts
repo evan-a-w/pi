@@ -6,24 +6,31 @@ import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
 type GeneratedModelGroups = {
 	"anthropic-messages": {
-		"accounts/fireworks/models/deepseek-v4-flash": object;
-		"accounts/fireworks/models/deepseek-v4-pro": object;
+		"accounts/fireworks/models/deepseek-v4-flash-0731": object;
+		"accounts/fireworks/models/deepseek-v4-flash-vision-exp": object;
+		"accounts/fireworks/models/deepseek-v4-pro-0813": object;
+		"accounts/fireworks/models/deepseek-v4p1-flash": object;
 		"accounts/fireworks/models/gpt-oss-120b": object;
-		"accounts/fireworks/models/gpt-oss-20b": object;
+		"accounts/fireworks/models/inkling": object;
 		"accounts/fireworks/models/kimi-k2p6": object;
 		"accounts/fireworks/models/kimi-k2p7-code": object;
-		"accounts/fireworks/models/kimi-k3": object;
-		"accounts/fireworks/models/minimax-m2p7": object;
 		"accounts/fireworks/models/minimax-m3": object;
+		"accounts/fireworks/models/mistral-large-3-fp8": object;
+		"accounts/fireworks/models/muse-glimmer-30b": object;
+		"accounts/fireworks/models/nemotron-3-ultra-nvfp4": object;
+		"accounts/fireworks/models/nemotron-lightning-3p5-30b-a3b": object;
 		"accounts/fireworks/models/qwen3p7-plus": object;
-		"accounts/fireworks/routers/kimi-k2p6-fast": object;
-		"accounts/fireworks/routers/kimi-k2p6-turbo": object;
-		"accounts/fireworks/routers/kimi-k2p7-code-fast": object;
-		"accounts/fireworks/routers/kimi-k3-fast": object;
+		"accounts/fireworks/models/qwen3p8-2p4t-a95b": object;
+		"accounts/fireworks/models/qwen3p8-max": object;
 	};
 	"openai-completions": {
 		"accounts/fireworks/models/glm-5p2": object;
+		"accounts/fireworks/models/glm-5p3": object;
+		"accounts/fireworks/models/glm-5p3-flash": object;
+		"accounts/fireworks/models/kimi-k3": object;
 		"accounts/fireworks/routers/glm-5p2-fast": object;
+		"accounts/fireworks/routers/glm-5p3-fast": object;
+		"accounts/fireworks/routers/kimi-k3-fast": object;
 	};
 };
 

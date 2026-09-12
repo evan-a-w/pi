@@ -6,9 +6,8 @@ import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
 type GeneratedModelGroups = {
 	"openai-completions": {
-		"gemma-4-31b": object;
 		"gpt-oss-120b": object;
-		"zai-glm-4.7": object;
+		"qwen-3.8-27b": object;
 	};
 };
 

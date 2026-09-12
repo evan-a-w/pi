@@ -6,12 +6,6 @@ import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
 type GeneratedModelGroups = {
 	"openai-completions": {
-		"kimi-k2-0711-preview": object;
-		"kimi-k2-0905-preview": object;
-		"kimi-k2-thinking": object;
-		"kimi-k2-thinking-turbo": object;
-		"kimi-k2-turbo-preview": object;
-		"kimi-k2.5": object;
 		"kimi-k2.6": object;
 		"kimi-k2.7-code": object;
 		"kimi-k2.7-code-highspeed": object;

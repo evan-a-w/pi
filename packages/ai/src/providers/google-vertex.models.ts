@@ -16,6 +16,8 @@ type GeneratedModelGroups = {
 		"gemini-3.5-flash": object;
 		"gemini-3.5-flash-lite": object;
 		"gemini-3.6-flash": object;
+		"gemini-3.7-flash": object;
+		"gemini-3.8-flash": object;
 		"gemini-flash-latest": object;
 		"gemini-flash-lite-latest": object;
 	};

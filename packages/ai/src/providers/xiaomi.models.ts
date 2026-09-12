@@ -6,9 +6,6 @@ import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
 type GeneratedModelGroups = {
 	"openai-completions": {
-		"mimo-v2-flash": object;
-		"mimo-v2-omni": object;
-		"mimo-v2-pro": object;
 		"mimo-v2.5": object;
 		"mimo-v2.5-pro": object;
 		"mimo-v2.5-pro-ultraspeed": object;

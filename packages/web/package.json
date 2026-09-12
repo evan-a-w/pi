@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/pi-web",
-	"version": "0.82.1",
+	"version": "0.85.1",
 	"description": "Web UI for the pi coding agent. Static assets served by pi --web; speaks the pi RPC protocol over WebSocket.",
 	"type": "module",
 	"scripts": {

@@ -1,72 +1,64 @@
-export type InstanceStatus = "starting" | "online" | "stopping" | "stopped" | "error";
+import type { JsonValue, ServiceCall, ServiceProviderUpdate } from "@earendil-works/chord";
+import type { Context, SessionMetadata } from "@earendil-works/pi-agent-core";
+import type { ServerListener } from "./listener.ts";
 
-export interface MachineRecord {
-	id: string;
-	createdAt: string;
-	lastSeenAt?: string;
-	label?: string;
+export interface ServerOptions {
+	listeners: readonly ServerListener[];
+	/** Stable logical server identity supplied by the installation or profile. */
+	serverId: string;
+	maxFrameLength?: number;
+	handshakeTimeoutMs?: number;
+	onConnectionCountChanged?: (count: number) => void;
+	onError?: (error: Error) => void;
 }
 
-export interface RadiusRegistration {
-	heartbeatIntervalMs: number;
-	expiresInMs: number;
+export type MaybePromise<T> = T | Promise<T>;
+
+/** One presentation connection's live capability for a hosted Session. */
+export interface RoutedSessionAttachment {
+	/** Route one contract-agnostic service operation to the attached Session endpoint. */
+	invokeService(
+		call: ServiceCall,
+		publish: (subscriptionId: string, update: ServiceProviderUpdate, context: Context) => MaybePromise<void>,
+		context: Context,
+	): Promise<JsonValue | undefined>;
+	release(context: Context): MaybePromise<void>;
 }
 
-/** A registered account namespace (see namespaces.ts). The implicit "default" namespace is never stored here. */
-export interface NamespaceRecord {
-	name: string;
-	createdAt: string;
+/** Presentation-scoped routing capabilities available to server service implementations. */
+export interface RoutedServerPresentation {
+	attachSession(sessionId: string, context: Context): Promise<void>;
+	detachSession(context: Context): Promise<void>;
+	/** Release routed attachments and handles before the application deletes durable metadata. */
+	prepareSessionRemoval(sessionId: string, context: Context): Promise<void>;
 }
 
-/** A saved reusable chunk of text, inserted into the chat composer from the snippet picker (packages/web). */
-export interface SnippetRecord {
-	id: string;
-	name: string;
-	text: string;
+/** One connection's server-scoped service endpoint. */
+export interface RoutedServerServiceAttachment {
+	invokeService(
+		call: ServiceCall,
+		publish: (subscriptionId: string, update: ServiceProviderUpdate, context: Context) => MaybePromise<void>,
+		context: Context,
+	): Promise<JsonValue | undefined>;
+	release(context: Context): MaybePromise<void>;
 }
 
-/** Persisted dashboard settings (see storage.ts loadDashboardSettings/saveDashboardSettings and settings.ts). */
-export interface DashboardSettings {
-	// Pre-fills the spawn form's working directory field. May contain a leading
-	// '~' (expanded server-side at spawn time, not validated here).
-	defaultCwd?: string;
-	snippets: SnippetRecord[];
+export interface RoutedServerServiceHost {
+	attachClient(presentation: RoutedServerPresentation, context: Context): MaybePromise<RoutedServerServiceAttachment>;
 }
 
-export interface InstanceRecord {
-	id: string;
-	status: InstanceStatus;
-	cwd: string;
-	createdAt: string;
-	lastSeenAt?: string;
-	// Display fallback when the session itself has no name (see session-manager's
-	// SessionInfoEntry). Precedence for the name shown to users is: the session's
-	// own name (stored in the session .jsonl, set via set_session_name / the
-	// dashboard rename control) > label > the session's first message > id prefix.
-	label?: string;
-	sessionId?: string;
-	sessionFile?: string;
-	// Cached copy of the session's own display name (RpcSessionState.sessionName /
-	// SessionManager.getSessionName()), kept in sync while live via get_state and
-	// updated directly on rename while stopped. See the name-precedence note above.
-	sessionName?: string;
-	radiusPiId?: string;
-	// Always-up session: auto-spawned from sessionFile on server startup and
-	// auto-respawned (bounded retries) if its process exits unexpectedly.
-	// Mutually exclusive with archived (setting one clears the other).
-	pinned?: boolean;
-	// When this session was (most recently) pinned. Fixes the pinned group's sort
-	// order (ascending, i.e. first-pinned-first): unlike lastSeenAt, activity
-	// never changes it, so pinned sessions don't reshuffle as they're used.
-	// Cleared on unpin; records pinned before this field existed have none (see
-	// listDashboardSessions/refreshSidebarSessions, which fall back to createdAt).
-	pinnedAt?: string;
-	// Hidden from the main dashboard list under a collapsed "Archived" section.
-	// Archiving a live instance stops it first; the record is kept (unlike a
-	// plain stop, which forgets the instance) so it can be unarchived later.
-	archived?: boolean;
-	// Account namespace (see namespaces.ts): a separate PI_CODING_AGENT_DIR tree
-	// giving this session its own provider credentials and sessions directory.
-	// undefined means the implicit "default" namespace (~/.pi/agent, unchanged).
-	namespace?: string;
+/** A process-safe handle that acquires presentation-scoped Session capabilities. */
+export interface RoutedSessionHandle {
+	attachClient(context: Context): MaybePromise<RoutedSessionAttachment>;
+	/** Resolves with an error for unexpected termination, or undefined after an expected close. */
+	readonly terminated?: Promise<Error | undefined>;
+	close(context: Context): Promise<void>;
+}
+
+/** Application capabilities used by server-wide management and Session routing. */
+export interface ServerHost<TMetadata extends SessionMetadata = SessionMetadata> {
+	readonly serverServices: RoutedServerServiceHost;
+	/** Resolve one durable Session ID or throw a bounded routing error. */
+	resolveSession(sessionId: string, context: Context): Promise<TMetadata>;
+	openSession(metadata: TMetadata, context: Context): Promise<RoutedSessionHandle>;
 }

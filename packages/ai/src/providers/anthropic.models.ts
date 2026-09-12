@@ -7,10 +7,9 @@ import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 type GeneratedModelGroups = {
 	"anthropic-messages": {
 		"claude-fable-5": object;
+		"claude-fable-5-1": object;
 		"claude-haiku-4-5": object;
 		"claude-haiku-4-5-20251001": object;
-		"claude-opus-4-1": object;
-		"claude-opus-4-1-20250805": object;
 		"claude-opus-4-5": object;
 		"claude-opus-4-5-20251101": object;
 		"claude-opus-4-6": object;

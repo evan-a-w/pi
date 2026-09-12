@@ -5,12 +5,10 @@ import values from "./data/xai.json" with { type: "json" };
 import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
 type GeneratedModelGroups = {
-	"openai-completions": {
-		"grok-4.3": object;
-		"grok-build-0.1": object;
-	};
 	"openai-responses": {
+		"grok-4.3": object;
 		"grok-4.5": object;
+		"grok-4.6": object;
 	};
 };
 

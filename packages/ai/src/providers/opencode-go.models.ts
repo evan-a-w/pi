@@ -7,26 +7,36 @@ import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 type GeneratedModelGroups = {
 	"anthropic-messages": {
 		"minimax-m3": object;
-		"qwen3.7-max": object;
-		"qwen3.7-plus": object;
+		"qwen3.8-flash": object;
 	};
 	"openai-completions": {
 		"deepseek-v4-flash": object;
+		"deepseek-v4-flash-vision-exp": object;
 		"deepseek-v4-pro": object;
+		"deepseek-v4.1-flash": object;
 		"glm-5.1": object;
 		"glm-5.2": object;
+		"glm-5.3": object;
+		"glm-5.3-flash": object;
 		"hy3": object;
+		"hy4-preview": object;
 		"kimi-k2.6": object;
 		"kimi-k2.7-code": object;
 		"kimi-k3": object;
+		"longcat-2.0": object;
 		"mimo-v2.5": object;
 		"mimo-v2.5-pro": object;
 		"minimax-m2.7": object;
 		"qwen3.6-plus": object;
+		"qwen3.7-max": object;
+		"qwen3.7-plus": object;
+		"qwen3.8-max": object;
 	};
 	"openai-responses": {
 		"gpt-5.6-luna": object;
-		"grok-4.5": object;
+		"grok-4.6": object;
+		"muse-spark-1.2-contributor": object;
+		"muse-spark-1.3-contributor": object;
 	};
 };
 

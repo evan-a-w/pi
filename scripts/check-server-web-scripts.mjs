@@ -2,7 +2,7 @@
 /**
  * Validate the inline <script> blocks of the server's generated web pages.
  *
- * packages/server/src/web.ts builds those pages inside template literals, so an
+ * packages/dashboard/src/web.ts builds those pages inside template literals, so an
  * unescaped sequence like "\n" is interpreted when the page is generated and ends
  * up as a real newline inside a JS string literal, breaking the whole script at
  * runtime while the TypeScript still type-checks. Serving the pages here and
@@ -16,11 +16,11 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const repoRoot = resolve(import.meta.dirname, "..");
-const webModule = resolve(repoRoot, "packages/server/dist/web.js");
+const webModule = resolve(repoRoot, "packages/dashboard/dist/web.js");
 
 // dist is gitignored, so a fresh checkout has nothing to render yet.
 if (!existsSync(webModule)) {
-	console.log("Skipping: packages/server/dist is not built.");
+	console.log("Skipping: packages/dashboard/dist is not built.");
 	process.exit(0);
 }
 
@@ -40,6 +40,7 @@ try {
 		["index", "/"],
 		["review", "/review"],
 		["terminal", "/terminal"],
+		["settings", "/settings"],
 	];
 
 	for (const [name, path] of pages) {
@@ -79,4 +80,4 @@ if (failures > 0) {
 	process.exit(1);
 }
 
-console.log("Server web pages OK (index, review, terminal).");
+console.log("Server web pages OK (index, review, terminal, settings).");

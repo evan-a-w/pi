@@ -7,8 +7,8 @@ import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 type GeneratedModelGroups = {
 	"anthropic-messages": {
 		"claude-fable-5": object;
+		"claude-fable-5-1": object;
 		"claude-haiku-4-5": object;
-		"claude-opus-4-1": object;
 		"claude-opus-4-5": object;
 		"claude-opus-4-6": object;
 		"claude-opus-4-7": object;
@@ -27,28 +27,30 @@ type GeneratedModelGroups = {
 		"gemini-3.5-flash": object;
 		"gemini-3.5-flash-lite": object;
 		"gemini-3.6-flash": object;
+		"gemini-3.7-flash": object;
+		"gemini-3.8-flash": object;
 	};
 	"openai-completions": {
 		"big-pickle": object;
 		"deepseek-v4-flash": object;
-		"deepseek-v4-flash-free": object;
+		"deepseek-v4-flash-vision-exp": object;
 		"deepseek-v4-pro": object;
 		"glm-5": object;
 		"glm-5.1": object;
 		"glm-5.2": object;
-		"grok-build-0.1": object;
+		"glm-5.3": object;
+		"glm-5.3-flash": object;
 		"kimi-k2.5": object;
 		"kimi-k2.6": object;
 		"kimi-k2.7-code": object;
 		"kimi-k3": object;
-		"laguna-s-2.1-free": object;
-		"ling-3.0-flash-free": object;
+		"ling-3.0-flash-fin-free": object;
 		"mimo-v2.5-free": object;
 		"minimax-m2.5": object;
 		"minimax-m2.7": object;
 		"minimax-m3": object;
 		"nemotron-3-ultra-free": object;
-		"north-mini-code-free": object;
+		"nemotron-3.5-lightning-free": object;
 	};
 	"openai-responses": {
 		"gpt-5": object;
@@ -70,7 +72,14 @@ type GeneratedModelGroups = {
 		"gpt-5.6-luna": object;
 		"gpt-5.6-sol": object;
 		"gpt-5.6-terra": object;
+		"gpt-6-astra": object;
 		"grok-4.5": object;
+		"grok-4.6": object;
+		"grok-build-0.1": object;
+		"muse-spark-1.2": object;
+		"muse-spark-1.2-contributor-free": object;
+		"muse-spark-1.3": object;
+		"muse-spark-1.3-contributor-free": object;
 	};
 };
 

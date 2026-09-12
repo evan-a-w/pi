@@ -9,7 +9,9 @@ type GeneratedModelGroups = {
 		"MiniMax-M2.5": object;
 		"deepseek-v3.2": object;
 		"deepseek-v4-flash": object;
+		"deepseek-v4-flash-0731": object;
 		"deepseek-v4-pro": object;
+		"deepseek-v4-pro-0813": object;
 		"glm-5": object;
 		"glm-5.1": object;
 		"glm-5.2": object;
@@ -20,7 +22,8 @@ type GeneratedModelGroups = {
 		"qwen3.6-plus": object;
 		"qwen3.7-max": object;
 		"qwen3.7-plus": object;
-		"qwen3.8-max-preview": object;
+		"qwen3.8-flash": object;
+		"qwen3.8-max": object;
 	};
 };
 

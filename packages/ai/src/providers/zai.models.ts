@@ -9,7 +9,10 @@ type GeneratedModelGroups = {
 		"glm-4.7": object;
 		"glm-5-turbo": object;
 		"glm-5.2": object;
-		"glm-5.2-highspeed[1m]": object;
+		"glm-5.2-highspeed": object;
+		"glm-5.3": object;
+		"glm-5.3-flash": object;
+		"glm-5.3-highspeed": object;
 	};
 };
 

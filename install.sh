@@ -40,7 +40,7 @@ echo "    pi"
 # pi-server
 cat > "$PREFIX/pi-server" << EOF
 #!/usr/bin/env bash
-exec "$TSX" --tsconfig "$TSCONFIG" "$REPO_ROOT/packages/server/src/cli.ts" "\$@"
+exec "$TSX" --tsconfig "$TSCONFIG" "$REPO_ROOT/packages/dashboard/src/cli.ts" "\$@"
 EOF
 chmod +x "$PREFIX/pi-server"
 echo "    pi-server"

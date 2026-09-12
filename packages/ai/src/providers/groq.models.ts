@@ -8,11 +8,11 @@ type GeneratedModelGroups = {
 	"openai-completions": {
 		"llama-3.1-8b-instant": object;
 		"llama-3.3-70b-versatile": object;
-		"meta-llama/llama-4-scout-17b-16e-instruct": object;
 		"openai/gpt-oss-120b": object;
 		"openai/gpt-oss-20b": object;
 		"openai/gpt-oss-safeguard-20b": object;
-		"qwen/qwen3-32b": object;
+		"qwen/qwen3.6-27b": object;
+		"qwen/qwen3.8-27b": object;
 	};
 };
 

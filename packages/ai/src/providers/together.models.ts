@@ -12,7 +12,9 @@ type GeneratedModelGroups = {
 		"Qwen/Qwen3.5-9B": object;
 		"Qwen/Qwen3.6-Plus": object;
 		"Qwen/Qwen3.7-Max": object;
+		"deepseek-ai/DeepSeek-V4-Flash-0731": object;
 		"deepseek-ai/DeepSeek-V4-Pro": object;
+		"deepseek-ai/DeepSeek-V4-Pro-0813": object;
 		"google/gemma-4-31B-it": object;
 		"meta-llama/Llama-3.3-70B-Instruct-Turbo": object;
 		"moonshotai/Kimi-K2.6": object;
@@ -23,6 +25,8 @@ type GeneratedModelGroups = {
 		"openai/gpt-oss-20b": object;
 		"thinkingmachines/Inkling": object;
 		"zai-org/GLM-5.2": object;
+		"zai-org/GLM-5.3": object;
+		"zai-org/GLM-5.3-Flash": object;
 	};
 };
 

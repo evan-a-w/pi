@@ -42,7 +42,7 @@ function spawnServer(webHost?: string, webPort?: number): ReturnType<typeof spaw
 	const srcDir = dirname(fileURLToPath(import.meta.url));
 	const repoRoot = dirname(dirname(dirname(dirname(srcDir))));
 	const tsxBin = join(repoRoot, "node_modules", ".bin", "tsx");
-	const serverCli = join(repoRoot, "packages", "server", "src", "cli.ts");
+	const serverCli = join(repoRoot, "packages", "dashboard", "src", "cli.ts");
 	return spawn(process.execPath, [tsxBin, serverCli, ...cliArgs], {
 		stdio: "ignore",
 	});

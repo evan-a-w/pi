@@ -6,30 +6,25 @@ import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
 type GeneratedModelGroups = {
 	"anthropic-messages": {
+		"claude-fable-5": object;
+		"claude-fable-5.1": object;
 		"claude-haiku-4.5": object;
-		"claude-opus-4.5": object;
-		"claude-opus-4.6": object;
 		"claude-opus-4.7": object;
 		"claude-opus-4.8": object;
 		"claude-opus-5": object;
-		"claude-sonnet-4": object;
-		"claude-sonnet-4.5": object;
 		"claude-sonnet-4.6": object;
 		"claude-sonnet-5": object;
 	};
 	"openai-completions": {
-		"claude-fable-5": object;
-		"gemini-2.5-pro": object;
-		"gemini-3-flash-preview": object;
-		"gemini-3.1-pro-preview": object;
 		"gemini-3.5-flash": object;
-		"gpt-4.1": object;
+		"gemini-3.6-flash": object;
+		"gemini-3.7-flash": object;
+		"gemini-3.8-flash": object;
 		"kimi-k2.7-code": object;
+		"kimi-k3": object;
 	};
 	"openai-responses": {
 		"gpt-5-mini": object;
-		"gpt-5.2": object;
-		"gpt-5.2-codex": object;
 		"gpt-5.3-codex": object;
 		"gpt-5.4": object;
 		"gpt-5.4-mini": object;
@@ -38,7 +33,11 @@ type GeneratedModelGroups = {
 		"gpt-5.6-luna": object;
 		"gpt-5.6-sol": object;
 		"gpt-5.6-terra": object;
+		"gpt-6-astra": object;
+		"grok-4.5": object;
+		"grok-4.6": object;
 		"mai-code-1-flash-picker": object;
+		"mai-code-1.1-flash": object;
 	};
 };
 

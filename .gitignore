@@ -42,6 +42,4 @@ plans/
 .pi/hf-sessions/
 .pi/hf-sessions-backup/
 collect.sh
-
-# pi-subagents extension runtime artifacts
-.pi-subagents/
+packages/agent/docs/extensions/pi-server-artifact/index.md

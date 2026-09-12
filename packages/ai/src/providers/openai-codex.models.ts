@@ -7,8 +7,6 @@ import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 type GeneratedModelGroups = {
 	"openai-codex-responses": {
 		"gpt-5.3-codex-spark": object;
-		"gpt-5.4": object;
-		"gpt-5.4-mini": object;
 		"gpt-5.5": object;
 		"gpt-5.6-luna": object;
 		"gpt-5.6-sol": object;

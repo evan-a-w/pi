@@ -6,7 +6,7 @@ import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
 type GeneratedModelGroups = {
 	"openai-completions": {
-		"deepseek-v4-flash": object;
+		"deepseek-flash": object;
 		"deepseek-v4-pro": object;
 	};
 };

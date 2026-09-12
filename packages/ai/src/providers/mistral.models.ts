@@ -36,6 +36,8 @@ type GeneratedModelGroups = {
 		"open-mixtral-8x7b": object;
 		"pixtral-12b": object;
 		"pixtral-large-latest": object;
+		"voxtral-small-latest": object;
+		"zai-glm-5-2": object;
 	};
 };
 
