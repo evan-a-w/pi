@@ -24,6 +24,7 @@ type GeneratedModelGroups = {
 		"apac.amazon.nova-lite-v1:0": object;
 		"apac.amazon.nova-micro-v1:0": object;
 		"apac.amazon.nova-pro-v1:0": object;
+		"apac.anthropic.claude-sonnet-4-20250514-v1:0": object;
 		"au.anthropic.claude-haiku-4-5-20251001-v1:0": object;
 		"au.anthropic.claude-opus-4-6-v1": object;
 		"au.anthropic.claude-opus-4-7": object;
@@ -46,6 +47,7 @@ type GeneratedModelGroups = {
 		"eu.anthropic.claude-opus-4-7": object;
 		"eu.anthropic.claude-opus-4-8": object;
 		"eu.anthropic.claude-opus-5": object;
+		"eu.anthropic.claude-sonnet-4-20250514-v1:0": object;
 		"eu.anthropic.claude-sonnet-4-5-20250929-v1:0": object;
 		"eu.anthropic.claude-sonnet-4-6": object;
 		"eu.anthropic.claude-sonnet-5": object;
@@ -59,6 +61,7 @@ type GeneratedModelGroups = {
 		"global.anthropic.claude-opus-4-7": object;
 		"global.anthropic.claude-opus-4-8": object;
 		"global.anthropic.claude-opus-5": object;
+		"global.anthropic.claude-sonnet-4-20250514-v1:0": object;
 		"global.anthropic.claude-sonnet-4-5-20250929-v1:0": object;
 		"global.anthropic.claude-sonnet-4-6": object;
 		"global.anthropic.claude-sonnet-5": object;
@@ -138,6 +141,7 @@ type GeneratedModelGroups = {
 		"us.anthropic.claude-opus-4-7": object;
 		"us.anthropic.claude-opus-4-8": object;
 		"us.anthropic.claude-opus-5": object;
+		"us.anthropic.claude-sonnet-4-20250514-v1:0": object;
 		"us.anthropic.claude-sonnet-4-5-20250929-v1:0": object;
 		"us.anthropic.claude-sonnet-4-6": object;
 		"us.anthropic.claude-sonnet-5": object;

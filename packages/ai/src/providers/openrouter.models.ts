@@ -65,6 +65,7 @@ type GeneratedModelGroups = {
 		"deepseek/deepseek-v4-flash": object;
 		"deepseek/deepseek-v4-flash-0731": object;
 		"deepseek/deepseek-v4-flash-0731:batch": object;
+		"deepseek/deepseek-v4-flash-0731:free": object;
 		"deepseek/deepseek-v4-flash-vision-exp": object;
 		"deepseek/deepseek-v4-flash-vision-exp:batch": object;
 		"deepseek/deepseek-v4-pro": object;
@@ -78,7 +79,6 @@ type GeneratedModelGroups = {
 		"google/gemini-2.5-flash:batch": object;
 		"google/gemini-2.5-pro": object;
 		"google/gemini-2.5-pro-preview": object;
-		"google/gemini-2.5-pro-preview-05-06": object;
 		"google/gemini-2.5-pro:batch": object;
 		"google/gemini-3-flash-preview": object;
 		"google/gemini-3-flash-preview:batch": object;
@@ -104,7 +104,6 @@ type GeneratedModelGroups = {
 		"google/gemma-4-26b-a4b-it": object;
 		"google/gemma-4-26b-a4b-it:free": object;
 		"google/gemma-4-31b-it": object;
-		"google/gemma-4-31b-it:batch": object;
 		"google/gemma-4-31b-it:free": object;
 		"ibm-granite/granite-4.2-8b": object;
 		"inception/mercury-2": object;
@@ -147,7 +146,6 @@ type GeneratedModelGroups = {
 		"mistralai/ministral-8b-2512:batch": object;
 		"mistralai/mistral-large": object;
 		"mistralai/mistral-large-2407": object;
-		"mistralai/mistral-large-2512": object;
 		"mistralai/mistral-large-2512:batch": object;
 		"mistralai/mistral-medium-3": object;
 		"mistralai/mistral-medium-3-5": object;
@@ -185,7 +183,6 @@ type GeneratedModelGroups = {
 		"openai/gpt-3.5-turbo:batch": object;
 		"openai/gpt-4": object;
 		"openai/gpt-4-turbo": object;
-		"openai/gpt-4-turbo-preview": object;
 		"openai/gpt-4-turbo:batch": object;
 		"openai/gpt-4.1": object;
 		"openai/gpt-4.1-mini": object;
@@ -323,6 +320,7 @@ type GeneratedModelGroups = {
 		"qwen/qwen3.8-2.4t-a95b": object;
 		"qwen/qwen3.8-2.4t-a95b:batch": object;
 		"qwen/qwen3.8-27b": object;
+		"qwen/qwen3.8-27b:free": object;
 		"qwen/qwen3.8-flash": object;
 		"qwen/qwen3.8-max-0902": object;
 		"rekaai/reka-edge": object;
@@ -337,13 +335,12 @@ type GeneratedModelGroups = {
 		"tencent/hy3": object;
 		"tencent/hy3-preview": object;
 		"tencent/hy4-preview": object;
-		"thedrummer/unslopnemo-12b": object;
 		"thinkingmachines/inkling": object;
 		"thinkingmachines/inkling-small": object;
-		"thinkingmachines/inkling-small:batch": object;
 		"thinkingmachines/inkling-small:free": object;
 		"thinkingmachines/inkling:batch": object;
 		"thinkingmachines/inkling:free": object;
+		"unbiased/pareto": object;
 		"upstage/solar-pro-3": object;
 		"upstage/solar-pro4": object;
 		"x-ai/grok-4.20": object;
@@ -375,6 +372,8 @@ type GeneratedModelGroups = {
 		"~anthropic/claude-haiku-latest": object;
 		"~anthropic/claude-opus-latest": object;
 		"~anthropic/claude-sonnet-latest": object;
+		"~deepseek/deepseek-flash-latest": object;
+		"~deepseek/deepseek-pro-latest": object;
 		"~deepseek/deepseek-v4-flash-latest": object;
 		"~google/gemini-flash-latest": object;
 		"~google/gemini-pro-latest": object;

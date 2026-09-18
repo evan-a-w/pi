@@ -36,6 +36,7 @@ type GeneratedModelGroups = {
 		"alibaba/qwen3.8-flash": object;
 		"alibaba/qwen3.8-max": object;
 		"alibaba/qwen3.8-max-0902": object;
+		"alibaba/qwen3.8-omni-flash": object;
 		"amazon/nova-2-lite": object;
 		"amazon/nova-lite": object;
 		"amazon/nova-micro": object;
@@ -59,6 +60,7 @@ type GeneratedModelGroups = {
 		"arcee-ai/trinity-large-thinking": object;
 		"bytedance/seed-1.6": object;
 		"bytedance/seed-1.8": object;
+		"bytedance/seed-2.1-turbo": object;
 		"cohere/command-a": object;
 		"deepseek/deepseek-r1": object;
 		"deepseek/deepseek-v3.1": object;
@@ -95,10 +97,6 @@ type GeneratedModelGroups = {
 		"inclusionai/ling-3.0-flash-vl": object;
 		"inclusionai/ling-3.0-flash-vl-free": object;
 		"interfaze/interfaze-beta": object;
-		"kwaipilot/kat-coder-air-v2.5": object;
-		"kwaipilot/kat-coder-pro-v1": object;
-		"kwaipilot/kat-coder-pro-v2": object;
-		"kwaipilot/kat-coder-pro-v2.5": object;
 		"meta/llama-3.1-70b": object;
 		"meta/llama-3.1-8b": object;
 		"meta/llama-3.3-70b": object;
@@ -119,17 +117,13 @@ type GeneratedModelGroups = {
 		"minimax/minimax-m2.7-highspeed": object;
 		"minimax/minimax-m3": object;
 		"mistral/codestral": object;
-		"mistral/devstral-2": object;
-		"mistral/devstral-small-2": object;
 		"mistral/ministral-14b": object;
 		"mistral/ministral-3b": object;
 		"mistral/ministral-8b": object;
 		"mistral/mistral-large-3": object;
-		"mistral/mistral-medium": object;
 		"mistral/mistral-medium-3.5": object;
 		"mistral/mistral-nemo": object;
 		"mistral/mistral-small": object;
-		"mistral/pixtral-12b": object;
 		"moonshotai/kimi-k2": object;
 		"moonshotai/kimi-k2-thinking": object;
 		"moonshotai/kimi-k2.5": object;
@@ -243,6 +237,7 @@ type GeneratedModelGroups = {
 		"zai/glm-5.3": object;
 		"zai/glm-5.3-fast": object;
 		"zai/glm-5.3-flash": object;
+		"zai/glm-5.3-flashx": object;
 		"zai/glm-5v-turbo": object;
 	};
 };

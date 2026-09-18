@@ -57,6 +57,7 @@ type GeneratedModelGroups = {
 		"gpt-5.6-luna": object;
 		"gpt-5.6-sol": object;
 		"gpt-5.6-terra": object;
+		"gpt-6-astra": object;
 		"o3": object;
 		"o3-mini": object;
 		"o4-mini": object;

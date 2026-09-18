@@ -15,6 +15,7 @@ type GeneratedModelGroups = {
 		"deepseek-ai/DeepSeek-V4-Flash-0731": object;
 		"deepseek-ai/DeepSeek-V4-Pro": object;
 		"deepseek-ai/DeepSeek-V4-Pro-0813": object;
+		"deepseek-ai/DeepSeek-V4.1-Flash": object;
 		"google/gemma-4-31B-it": object;
 		"meta-llama/Llama-3.3-70B-Instruct-Turbo": object;
 		"moonshotai/Kimi-K2.6": object;

@@ -12,9 +12,11 @@ type GeneratedModelGroups = {
 		"deepseek-v4-flash-0731": object;
 		"deepseek-v4-pro": object;
 		"deepseek-v4-pro-0813": object;
+		"deepseek-v4.1-flash": object;
 		"glm-5": object;
 		"glm-5.1": object;
 		"glm-5.2": object;
+		"glm-5.3": object;
 		"kimi-k2.5": object;
 		"kimi-k2.6": object;
 		"kimi-k2.7-code": object;
